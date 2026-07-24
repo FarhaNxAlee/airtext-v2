@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "wrangler dev",
+    "dev": "npm run build:client && wrangler dev",
     "build:client": "vite build",
     "deploy": "npm run build:client && wrangler deploy",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.client.json",
@@ -18,8 +18,8 @@
   "dependencies": {
     "hono": "^4.6.0",
     "drizzle-orm": "^0.36.0",
-    "qrcode": "^1.5.4",
-    "html5-qrcode": "^2.3.8"
+    "qrcodejs": "1.0.0",
+    "html5-qrcode": "2.3.8"
   },
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "^0.6.0",
