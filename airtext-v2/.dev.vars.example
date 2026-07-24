@@ -1,0 +1,2 @@
+APP_SECRET=your-local-secret-at-least-24-chars
+ADMIN_PASSWORD=your-local-admin-password

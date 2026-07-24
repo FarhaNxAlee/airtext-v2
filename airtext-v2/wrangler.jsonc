@@ -1,0 +1,44 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  // This targets the REAL, already-live Worker (air4share.farhanwebuse.workers.dev)
+  // and its REAL D1/R2/KV resources. `wrangler dev` uses local simulated
+  // versions of these by default — only `wrangler deploy` touches production.
+  "name": "air4share",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-07-24",
+  "account_id": "1bda1bde506a5819776160299196e802",
+  "preview_urls": false,
+  "observability": {
+    "enabled": true,
+    "logs": {
+      "enabled": true
+    }
+  },
+  "assets": {
+    "directory": "./dist",
+    "binding": "ASSETS",
+    "not_found_handling": "none"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "airtext",
+      "database_id": "6da609ba-b618-42e0-a118-a1284020a049"
+    }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "FILES_BUCKET",
+      "bucket_name": "airtext"
+    }
+  ],
+  "kv_namespaces": [
+    {
+      "binding": "SHARE_KV",
+      "id": "f0905b728d8642df9df5e7e167c52ab0"
+    }
+  ]
+  // APP_SECRET and ADMIN_PASSWORD are real secrets — set via
+  // `wrangler secret put APP_SECRET` / `wrangler secret put ADMIN_PASSWORD`.
+  // Never add them here as `vars`.
+}
