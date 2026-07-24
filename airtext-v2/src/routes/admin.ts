@@ -175,7 +175,13 @@ adminRoutes.patch("/api/admin/settings", async (c) => {
   if (!body.ok) return body.response;
   const current = await getSiteSettings(env);
   const settings = sanitizeSettings({ ...current, ...body.data });
-  await env.DB.prepare("UPDATE site_settings SET data = ?, updated_at = ? WHERE id = 1")
+  // UPSERT, not UPDATE: v1's ensureD1Schema() re-seeded this row on every
+  // request so an UPDATE could never silently no-op; v2 only seeds it once
+  // via the baseline migration, so a fresh/empty DB must self-heal here.
+  await env.DB.prepare(
+    `INSERT INTO site_settings (id, data, updated_at) VALUES (1, ?, ?)
+     ON CONFLICT(id) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at`,
+  )
     .bind(JSON.stringify(settings), Date.now())
     .run();
   setSiteSettingsCache(settings);

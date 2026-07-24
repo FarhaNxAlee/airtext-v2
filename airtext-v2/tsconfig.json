@@ -4,7 +4,7 @@
     "lib": ["ES2022"],
     "module": "ES2022",
     "moduleResolution": "Bundler",
-    "types": ["@cloudflare/workers-types", "vitest/globals"],
+    "types": ["@cloudflare/workers-types"],
     "strict": true,
     "skipLibCheck": true,
     "esModuleInterop": true,
@@ -13,5 +13,5 @@
     "noUnusedParameters": true,
     "noEmit": true
   },
-  "include": ["src", "test", "drizzle.config.ts", "vitest.config.ts"]
+  "include": ["src"]
 }

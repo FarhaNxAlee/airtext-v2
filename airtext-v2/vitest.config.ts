@@ -1,11 +1,25 @@
-import { defineWorkersConfig } from "@cloudflare/vitest-pool-workers/config";
+import path from "node:path";
+import { defineWorkersConfig, readD1Migrations } from "@cloudflare/vitest-pool-workers/config";
 
-export default defineWorkersConfig({
-  test: {
-    poolOptions: {
-      workers: {
-        wrangler: { configPath: "./wrangler.jsonc" },
+export default defineWorkersConfig(async () => {
+  const migrationsPath = path.join(__dirname, "migrations");
+  const migrations = await readD1Migrations(migrationsPath);
+
+  return {
+    test: {
+      setupFiles: ["./test/setup.ts"],
+      poolOptions: {
+        workers: {
+          wrangler: { configPath: "./wrangler.jsonc" },
+          miniflare: {
+            bindings: {
+              TEST_MIGRATIONS: migrations,
+              APP_SECRET: "test-secret-at-least-24-characters-long",
+              ADMIN_PASSWORD: "test-admin-password",
+            },
+          },
+        },
       },
     },
-  },
+  };
 });

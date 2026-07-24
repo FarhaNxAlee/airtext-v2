@@ -9,6 +9,11 @@ CREATE TABLE IF NOT EXISTS site_settings (
   data TEXT NOT NULL,
   updated_at INTEGER NOT NULL
 );
+-- v1 seeded this row on every request via ensureD1Schema(); getSiteSettings()
+-- already falls back to defaults if it's missing, but seed it here too so a
+-- fresh DB matches production's shape from the start (the admin settings
+-- UPDATE also upserts defensively -- see src/routes/admin.ts).
+INSERT OR IGNORE INTO site_settings (id, data, updated_at) VALUES (1, '{}', 0);
 
 CREATE TABLE IF NOT EXISTS notes (
   id TEXT PRIMARY KEY,
