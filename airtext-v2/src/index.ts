@@ -5,6 +5,7 @@ import { notesRoutes } from "./routes/notes";
 import { filesRoutes } from "./routes/files";
 import { feedbackRoutes } from "./routes/feedback";
 import { adminRoutes } from "./routes/admin";
+import { usersRoutes } from "./routes/users";
 import { seoRoutes } from "./routes/seo";
 import { jsonError } from "./lib/http";
 import { getSiteSettings } from "./lib/settings";
@@ -103,6 +104,7 @@ app.route("/", notesRoutes);
 app.route("/", filesRoutes);
 app.route("/", feedbackRoutes);
 app.route("/", adminRoutes);
+app.route("/", usersRoutes);
 
 app.get("*", async (c) => {
   const url = new URL(c.req.url);

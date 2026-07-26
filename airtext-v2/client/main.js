@@ -156,6 +156,15 @@ import "./style.css";
         el.feedbackRating = document.getElementById("feedback-rating");
         el.feedbackSubmit = document.getElementById("feedback-submit");
 
+        el.adminUsers = document.getElementById("admin-users");
+        el.adminRoles = document.getElementById("admin-roles");
+        el.adminUserCreateForm = document.getElementById("admin-user-create-form");
+        el.newUserEmail = document.getElementById("new-user-email");
+        el.newUserName = document.getElementById("new-user-name");
+        el.newUserPassword = document.getElementById("new-user-password");
+        el.newUserRole = document.getElementById("new-user-role");
+        el.adminUserCreateSubmit = document.getElementById("admin-user-create-submit");
+
         el.adminLoginCard = document.getElementById("admin-login-card");
         el.adminLoginHelp = document.getElementById("admin-login-help");
         el.adminLoginForm = document.getElementById("admin-login-form");
@@ -255,8 +264,13 @@ import "./style.css";
         el.adminLogout.addEventListener("click", adminLogout);
         el.adminRefresh.addEventListener("click", loadAdminDashboard);
         el.adminTabs.forEach(function (tab) {
-          tab.addEventListener("click", function () { switchAdminTab(tab.getAttribute("data-admin-tab")); });
+          tab.addEventListener("click", function () {
+            var name = tab.getAttribute("data-admin-tab");
+            switchAdminTab(name);
+            if (name === "users") loadAdminUsers();
+          });
         });
+        if (el.adminUserCreateForm) el.adminUserCreateForm.addEventListener("submit", createAdminUser);
 
         el.shareTitle.addEventListener("input", updateCounters);
         el.shareText.addEventListener("input", updateCounters);
@@ -330,6 +344,15 @@ import "./style.css";
             updateFeedbackStatus(feedbackId, actionElement.getAttribute("data-feedback-status"));
           }
           if (action === "admin-delete-feedback" && feedbackId) deleteFeedback(feedbackId);
+
+          var targetUserId = actionElement.getAttribute("data-user-id");
+          if (action === "admin-toggle-user-status" && targetUserId) {
+            toggleUserStatus(targetUserId, actionElement.getAttribute("data-user-status"));
+          }
+          if (action === "admin-delete-user" && targetUserId) deleteAdminUser(targetUserId);
+
+          var targetRoleId = actionElement.getAttribute("data-role-id");
+          if (action === "admin-save-role" && targetRoleId) saveRole(targetRoleId);
         });
 
         [el.itemModal, el.fileModal, el.qrModal, el.scannerModal].forEach(function (modal) {
@@ -1756,6 +1779,254 @@ import "./style.css";
           row.appendChild(value);
           el.adminEventCounts.appendChild(row);
         });
+      }
+
+      var adminRolesCache = [];
+
+      async function loadAdminUsers() {
+        if (!el.adminUsers) return;
+        try {
+          var usersData = await adminFetch("/api/admin/users");
+          var rolesData = await adminFetch("/api/admin/roles");
+          adminRolesCache = rolesData.roles;
+          renderAdminUsers(usersData.users, rolesData.roles);
+          renderAdminRoles(rolesData.roles);
+          populateRoleSelect(rolesData.roles);
+        } catch (error) {
+          toast(error.message || "Unable to load accounts.", "error");
+        }
+      }
+
+      function populateRoleSelect(roles) {
+        if (!el.newUserRole) return;
+        el.newUserRole.textContent = "";
+        roles.forEach(function (role) {
+          var option = document.createElement("option");
+          option.value = String(role.id);
+          option.textContent = role.name;
+          el.newUserRole.appendChild(option);
+        });
+      }
+
+      function renderAdminUsers(users, roles) {
+        el.adminUsers.textContent = "";
+        if (!users.length) {
+          el.adminUsers.textContent = "No accounts yet.";
+          return;
+        }
+        users.forEach(function (user) {
+          var row = document.createElement("div");
+          row.className = "admin-list-row";
+
+          var body = document.createElement("div");
+          body.className = "min-w-0";
+          var title = document.createElement("strong");
+          title.className = "block truncate";
+          title.textContent = user.displayName + " · " + user.email;
+          var meta = document.createElement("p");
+          meta.className = "mt-1 text-xs text-slate-500";
+          meta.textContent = (user.status === "active" ? "Active" : "Disabled") +
+            (user.lastLoginAt ? " · last login " + formatDate(user.lastLoginAt) : " · never logged in");
+          body.appendChild(title);
+          body.appendChild(meta);
+
+          var controls = document.createElement("div");
+          controls.className = "flex items-center gap-2";
+
+          var roleSelect = document.createElement("select");
+          roleSelect.className = "filter-select";
+          roles.forEach(function (role) {
+            var option = document.createElement("option");
+            option.value = String(role.id);
+            option.textContent = role.name;
+            option.selected = role.id === user.roleId;
+            roleSelect.appendChild(option);
+          });
+          roleSelect.addEventListener("change", function () { changeUserRole(user.id, roleSelect.value); });
+
+          var toggleButton = document.createElement("button");
+          toggleButton.type = "button";
+          toggleButton.className = "rounded-md border border-white/10 px-3 py-2 text-xs text-slate-300";
+          toggleButton.setAttribute("data-action", "admin-toggle-user-status");
+          toggleButton.setAttribute("data-user-id", user.id);
+          toggleButton.setAttribute("data-user-status", user.status === "active" ? "disabled" : "active");
+          toggleButton.textContent = user.status === "active" ? "Disable" : "Enable";
+
+          var deleteButton = document.createElement("button");
+          deleteButton.type = "button";
+          deleteButton.className = "rounded-md border border-red-500/30 px-3 py-2 text-xs text-red-300";
+          deleteButton.setAttribute("data-action", "admin-delete-user");
+          deleteButton.setAttribute("data-user-id", user.id);
+          deleteButton.textContent = "Delete";
+
+          controls.appendChild(roleSelect);
+          controls.appendChild(toggleButton);
+          controls.appendChild(deleteButton);
+
+          row.appendChild(body);
+          row.appendChild(controls);
+          el.adminUsers.appendChild(row);
+        });
+      }
+
+      function renderAdminRoles(roles) {
+        el.adminRoles.textContent = "";
+        roles.forEach(function (role) {
+          var card = document.createElement("div");
+          card.className = "rounded-lg border border-[var(--line)] p-4";
+          card.setAttribute("data-role-card", String(role.id));
+
+          var nameRow = document.createElement("div");
+          nameRow.className = "flex items-center gap-3";
+          var nameInput = document.createElement("input");
+          nameInput.className = "form-field";
+          nameInput.value = role.name;
+          nameInput.setAttribute("data-role-field", "name");
+          var rankBadge = document.createElement("span");
+          rankBadge.className = "note-badge";
+          rankBadge.textContent = "rank " + role.rank;
+          nameRow.appendChild(nameInput);
+          nameRow.appendChild(rankBadge);
+          card.appendChild(nameRow);
+
+          if (role.rank === 0) {
+            var fixedNote = document.createElement("p");
+            fixedNote.className = "mt-2 text-xs text-slate-500";
+            fixedNote.textContent = "Admin limits are fixed and not configurable.";
+            card.appendChild(fixedNote);
+          } else {
+            var limits = role.defaultLimits || {};
+            var grid = document.createElement("div");
+            grid.className = "content-field-grid mt-3";
+            [
+              ["ttlSeconds", "Note expiry (seconds)"],
+              ["maxTextLength", "Max text length"],
+              ["maxFileSizeMB", "Max file size (MB)"],
+              ["maxBatchTotalMB", "Max batch total (MB)"],
+              ["maxFilesPerBatch", "Max files per batch"],
+              ["fileTtlSeconds", "File expiry (seconds)"]
+            ].forEach(function (pair) {
+              var label = document.createElement("label");
+              label.className = "grid gap-1 text-xs";
+              label.textContent = pair[1];
+              var input = document.createElement("input");
+              input.className = "form-field mt-1";
+              input.type = "number";
+              input.min = "1";
+              input.value = limits[pair[0]] != null ? limits[pair[0]] : "";
+              input.setAttribute("data-role-field", pair[0]);
+              label.appendChild(input);
+              grid.appendChild(label);
+            });
+            card.appendChild(grid);
+          }
+
+          var saveButton = document.createElement("button");
+          saveButton.type = "button";
+          saveButton.className = "primary-action mt-3 px-4 py-2 text-sm font-semibold";
+          saveButton.setAttribute("data-action", "admin-save-role");
+          saveButton.setAttribute("data-role-id", String(role.id));
+          saveButton.textContent = "Save role";
+          card.appendChild(saveButton);
+
+          el.adminRoles.appendChild(card);
+        });
+      }
+
+      async function createAdminUser(event) {
+        event.preventDefault();
+        var email = el.newUserEmail.value.trim();
+        var displayName = el.newUserName.value.trim();
+        var password = el.newUserPassword.value;
+        var roleId = Number(el.newUserRole.value);
+        if (!email) return fieldError(el.newUserEmail, "Enter an email address.");
+        if (!displayName) return fieldError(el.newUserName, "Enter a display name.");
+        if (password.length < 10) return fieldError(el.newUserPassword, "Password must be at least 10 characters.");
+
+        el.adminUserCreateSubmit.disabled = true;
+        try {
+          await adminFetch("/api/admin/users", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ email: email, password: password, displayName: displayName, roleId: roleId })
+          });
+          el.adminUserCreateForm.reset();
+          toast("Account created.", "success");
+          await loadAdminUsers();
+        } catch (error) {
+          toast(error.message || "Unable to create account.", "error");
+        } finally {
+          el.adminUserCreateSubmit.disabled = false;
+        }
+      }
+
+      async function changeUserRole(userId, roleId) {
+        try {
+          await adminFetch("/api/admin/users/" + userId, {
+            method: "PATCH",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ roleId: Number(roleId) })
+          });
+          toast("Role updated.", "success");
+        } catch (error) {
+          toast(error.message || "Unable to update role.", "error");
+          await loadAdminUsers();
+        }
+      }
+
+      async function toggleUserStatus(userId, nextStatus) {
+        try {
+          await adminFetch("/api/admin/users/" + userId, {
+            method: "PATCH",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ status: nextStatus })
+          });
+          toast(nextStatus === "active" ? "Account enabled." : "Account disabled.", "success");
+          await loadAdminUsers();
+        } catch (error) {
+          toast(error.message || "Unable to update account.", "error");
+        }
+      }
+
+      async function deleteAdminUser(userId) {
+        try {
+          await adminFetch("/api/admin/users/" + userId, { method: "DELETE" });
+          toast("Account deleted.", "success");
+          await loadAdminUsers();
+        } catch (error) {
+          toast(error.message || "Unable to delete account.", "error");
+        }
+      }
+
+      async function saveRole(roleId) {
+        var role = adminRolesCache.filter(function (entry) { return String(entry.id) === String(roleId); })[0];
+        if (!role) return;
+        var card = document.querySelector('[data-role-card="' + roleId + '"]');
+        if (!card) return;
+        var payload = {};
+        var nameField = card.querySelector('[data-role-field="name"]');
+        if (nameField) payload.name = nameField.value;
+        if (role.rank !== 0) {
+          var limits = {};
+          card.querySelectorAll("[data-role-field]").forEach(function (field) {
+            var key = field.getAttribute("data-role-field");
+            if (key === "name") return;
+            var num = Number(field.value);
+            if (Number.isFinite(num)) limits[key] = num;
+          });
+          payload.defaultLimits = limits;
+        }
+        try {
+          await adminFetch("/api/admin/roles/" + roleId, {
+            method: "PATCH",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify(payload)
+          });
+          toast("Role saved.", "success");
+          await loadAdminUsers();
+        } catch (error) {
+          toast(error.message || "Unable to save role.", "error");
+        }
       }
 
       function renderAdminNotes(notes) {

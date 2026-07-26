@@ -504,6 +504,7 @@ const APP_SHELL = String.raw`<!doctype html>
           <button type="button" class="admin-tab" data-admin-tab="notes" role="tab" aria-selected="false">Notes</button>
           <button type="button" class="admin-tab" data-admin-tab="files" role="tab" aria-selected="false">Files</button>
           <button type="button" class="admin-tab" data-admin-tab="feedback" role="tab" aria-selected="false">Feedback</button>
+          <button type="button" class="admin-tab" data-admin-tab="users" role="tab" aria-selected="false">Users</button>
           <button type="button" class="admin-tab" data-admin-tab="settings" role="tab" aria-selected="false">Settings</button>
         </div>
 
@@ -539,6 +540,31 @@ const APP_SHELL = String.raw`<!doctype html>
 
         <div class="admin-tab-panel hidden" data-admin-panel="feedback">
           <section class="admin-panel"><div class="admin-panel-head"><div><h2 class="font-bold text-white">User feedback</h2><p class="text-xs text-slate-500">Review and resolve submissions.</p></div></div><div id="admin-feedback" class="admin-panel-body"></div></section>
+        </div>
+
+        <div class="admin-tab-panel hidden" data-admin-panel="users">
+          <section class="admin-panel">
+            <div class="admin-panel-head">
+              <div><h2 class="font-bold text-white">Accounts</h2><p class="text-xs text-slate-500">Only admins can create accounts -- no public signup.</p></div>
+            </div>
+            <div id="admin-users" class="admin-panel-body"></div>
+          </section>
+
+          <section class="admin-panel mt-5">
+            <div class="admin-panel-head"><div><h2 class="font-bold text-white">Create account</h2></div></div>
+            <form id="admin-user-create-form" class="admin-panel-body grid gap-3 sm:grid-cols-2">
+              <label class="grid gap-2 text-sm">Email<input id="new-user-email" class="form-field" type="email" required></label>
+              <label class="grid gap-2 text-sm">Display name<input id="new-user-name" class="form-field" type="text" maxlength="80" required></label>
+              <label class="grid gap-2 text-sm">Password<input id="new-user-password" class="form-field" type="password" minlength="10" required></label>
+              <label class="grid gap-2 text-sm">Role<select id="new-user-role" class="form-field"></select></label>
+              <button id="admin-user-create-submit" type="submit" class="primary-action px-4 py-3 font-semibold sm:col-span-2">Create account</button>
+            </form>
+          </section>
+
+          <section class="admin-panel mt-5">
+            <div class="admin-panel-head"><div><h2 class="font-bold text-white">Roles &amp; default limits</h2><p class="text-xs text-slate-500">Rename a role or edit what Contributor/Pro accounts get by default. Admin limits are fixed.</p></div></div>
+            <div id="admin-roles" class="admin-panel-body grid gap-4"></div>
+          </section>
         </div>
 
         <div class="admin-tab-panel hidden" data-admin-panel="settings">

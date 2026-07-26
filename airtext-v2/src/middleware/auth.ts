@@ -60,6 +60,50 @@ export async function isAuthenticated(request: Request, env: Env): Promise<boole
   return (await getSession(request, env)) !== null;
 }
 
+export interface AuthenticatedUser {
+  id: string;
+  email: string;
+  displayName: string;
+  rank: number;
+  roleName: string;
+  roleDefaultLimits: string;
+  customLimits: string | null;
+}
+
+interface AuthenticatedUserRow {
+  id: string;
+  email: string;
+  display_name: string;
+  rank: number;
+  role_name: string;
+  default_limits: string;
+  custom_limits: string | null;
+}
+
+/** Loads the full user+role row for the current session, or null if not
+ *  logged in / the session references a disabled or deleted account. */
+export async function getAuthenticatedUser(request: Request, env: Env): Promise<AuthenticatedUser | null> {
+  const session = await getSession(request, env);
+  if (!session) return null;
+  const row = await env.DB.prepare(
+    `SELECT u.id, u.email, u.display_name, r.rank, r.name AS role_name, r.default_limits, u.custom_limits
+     FROM users u JOIN roles r ON r.id = u.role_id
+     WHERE u.id = ? AND u.status = 'active'`,
+  )
+    .bind(session.sub)
+    .first<AuthenticatedUserRow>();
+  if (!row) return null;
+  return {
+    id: row.id,
+    email: row.email,
+    displayName: row.display_name,
+    rank: row.rank,
+    roleName: row.role_name,
+    roleDefaultLimits: row.default_limits,
+    customLimits: row.custom_limits,
+  };
+}
+
 /**
  * `maxRank` is the highest (numerically largest) rank allowed through --
  * rank 0 (admin) always satisfies any check. Pass `requireMutationHeader`
