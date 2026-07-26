@@ -168,6 +168,16 @@ async function createUniqueFileShareCode(env: Env): Promise<string> {
   throw new Error("Unable to generate a unique file share code.");
 }
 
+const VANITY_CODE_PATTERN = /^[A-Z0-9]{4,12}$/;
+
+async function reserveCustomFileShareCode(env: Env, requestedCode: string): Promise<string | null> {
+  const code = normalizeShareCode(requestedCode);
+  if (!VANITY_CODE_PATTERN.test(code)) return null;
+  const existing = await env.DB.prepare("SELECT 1 AS found FROM file_groups WHERE code = ?").bind(code).first();
+  if (existing) return null;
+  return code;
+}
+
 async function verifyGroupPin(
   request: Request,
   env: Env,
@@ -348,6 +358,7 @@ filesRoutes.post("/api/files", async (c) => {
   const titleInput = typeof form.get("title") === "string" ? (form.get("title") as string) : "";
   const title = normalizeTitle(titleInput) || String(uploadedFiles[0].name || "Untitled file").slice(0, settings.maxTitleLength);
   const wantsLock = settings.pinEnabled && form.get("locked") === "1";
+  const wantsBurnAfterRead = form.get("burnAfterRead") === "1";
   const pinRaw = form.get("pin");
   const pin = typeof pinRaw === "string" ? pinRaw.trim() : "";
   if (title.length > settings.maxTitleLength) {
@@ -372,9 +383,20 @@ filesRoutes.post("/api/files", async (c) => {
     );
   }
 
+  let code: string;
+  const customCodeRaw = form.get("customCode");
+  if (limits.allowCustomCode && typeof customCodeRaw === "string" && customCodeRaw.trim()) {
+    const reserved = await reserveCustomFileShareCode(env, customCodeRaw);
+    if (!reserved) {
+      return jsonError("That code is already taken or invalid (4-12 letters/numbers).", 409, "CODE_TAKEN");
+    }
+    code = reserved;
+  } else {
+    code = await createUniqueFileShareCode(env);
+  }
+
   const roomId = await getRoomId(c.req.raw, env.APP_SECRET);
   const groupId = randomBase64Url(16);
-  const code = await createUniqueFileShareCode(env);
   const deleteToken = randomBase64Url(32);
   const deleteTokenHash = await hmacHex(env.APP_SECRET, `delete:${deleteToken}`);
   const createdAt = Date.now();
@@ -413,9 +435,12 @@ filesRoutes.post("/api/files", async (c) => {
       env.DB.prepare(
         `INSERT INTO file_groups (
           id, room_id, user_id, title, locked, pin_salt, pin_hash, code,
-          delete_token_hash, total_size_bytes, created_at, expires_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      ).bind(groupId, roomId, user?.id ?? null, title, wantsLock ? 1 : 0, pinSalt, pinHash, code, deleteTokenHash, batchBytes, createdAt, expiresAt),
+          delete_token_hash, total_size_bytes, created_at, expires_at, burn_after_read
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).bind(
+        groupId, roomId, user?.id ?? null, title, wantsLock ? 1 : 0, pinSalt, pinHash, code, deleteTokenHash,
+        batchBytes, createdAt, expiresAt, wantsBurnAfterRead ? 1 : 0,
+      ),
       ...uploaded.map((entry) =>
         env.DB.prepare(
           `INSERT INTO files (id, group_id, filename, mime, size_bytes, r2_key, download_count, created_at)
@@ -500,7 +525,7 @@ filesRoutes.get("/api/share/file/:code", async (c) => {
   const group = await getGroupByCode(env, c.req.param("code"));
   if (!group) return jsonError("This share code is invalid or has expired.", 404, "CODE_NOT_FOUND");
   const via = normalizeAccessMethodParam(url);
-  if (!group.locked && settings.crossNetworkAddEnabled) {
+  if (!group.locked && !group.burnAfterRead && settings.crossNetworkAddEnabled) {
     const roomId = await getRoomId(c.req.raw, env.APP_SECRET);
     await addGroupToRoom(env, group, roomId, constantTimeEqual(roomId, group.roomId) ? "mine" : "received");
   }
@@ -517,7 +542,7 @@ filesRoutes.post("/api/share/file/:code/unlock", async (c) => {
   if (!group) return jsonError("This share code is invalid or has expired.", 404, "CODE_NOT_FOUND");
   const result = await verifyGroupPin(c.req.raw, env, group);
   if (!result.ok) return result.response;
-  if (settings.crossNetworkAddEnabled) {
+  if (!group.burnAfterRead && settings.crossNetworkAddEnabled) {
     const roomId = await getRoomId(c.req.raw, env.APP_SECRET);
     await addGroupToRoom(env, group, roomId, constantTimeEqual(roomId, group.roomId) ? "mine" : "received");
   }
@@ -551,6 +576,28 @@ filesRoutes.get("/api/file/:fileId/download", async (c) => {
   await recordEvent(env, c.req.raw, "file_downloaded");
 
   const safeName = entry.filename.replace(/["\r\n]/g, "");
+
+  // Burn-after-read for files means "after the first download from this
+  // batch" (not at open-time, since the open response is what hands out
+  // the download links/tokens the user hasn't clicked yet). Buffer this
+  // file's bytes before deleting so the response body is unaffected by
+  // its own R2 object being removed, then delete synchronously -- awaited,
+  // not fire-and-forget, so the batch is guaranteed gone by the time this
+  // request completes (no ambiguity about whether cleanup "eventually" ran).
+  if (group.burnAfterRead) {
+    const bytes = await object.arrayBuffer();
+    await deleteGroupAndFiles(env, group.id);
+    return new Response(bytes, {
+      status: 200,
+      headers: {
+        "content-type": entry.mime || "application/octet-stream",
+        "content-disposition": `attachment; filename="${safeName}"`,
+        "cache-control": "no-store",
+        "content-length": String(entry.sizeBytes),
+      },
+    });
+  }
+
   return new Response(object.body, {
     status: 200,
     headers: {

@@ -34,10 +34,12 @@ export interface NoteRow {
   expiresAt: number;
   userId: string | null;
   sharedBy: SharedBy | null;
+  burnAfterRead: boolean;
 }
 
 interface RawNoteRow {
   id: string;
+  burn_after_read?: number;
   room_id?: string;
   title?: string;
   body?: string;
@@ -76,6 +78,7 @@ function rowToNote(row: RawNoteRow | null | undefined): NoteRow | null {
     sharedBy: row.shared_by_name
       ? { name: String(row.shared_by_name), role: String(row.shared_by_role || ""), rank: Number(row.shared_by_rank) }
       : null,
+    burnAfterRead: Boolean(row.burn_after_read),
   };
 }
 
@@ -114,6 +117,20 @@ async function createUniqueShareCode(env: Env): Promise<string> {
     if (!existing) return code;
   }
   throw new Error("Unable to generate a unique share code.");
+}
+
+const VANITY_CODE_PATTERN = /^[A-Z0-9]{4,12}$/;
+
+/** Phase 6: Contributor/Pro can request a custom code (gated by
+ *  limits.allowCustomCode). Returns null (caller should error) if the
+ *  requested code is malformed or already taken -- never silently falls
+ *  back to a random one, since that would surprise the user. */
+async function reserveCustomShareCode(env: Env, requestedCode: string): Promise<string | null> {
+  const code = normalizeShareCode(requestedCode);
+  if (!VANITY_CODE_PATTERN.test(code)) return null;
+  const existing = await env.DB.prepare("SELECT 1 AS found FROM notes WHERE code = ?").bind(code).first();
+  if (existing) return null;
+  return code;
 }
 
 function publicItemPayload(note: NoteRow, includeText: boolean) {
@@ -213,13 +230,16 @@ notesRoutes.post("/api/items", async (c) => {
   const user = await getAuthenticatedUser(c.req.raw, env);
   const limits = await getEffectiveLimits(env, user);
 
-  const body = await readJsonBody<{ title?: string; text?: string; locked?: boolean; pin?: string }>(
+  const body = await readJsonBody<{
+    title?: string; text?: string; locked?: boolean; pin?: string; customCode?: string; burnAfterRead?: boolean;
+  }>(
     c.req.raw,
     Math.max(24_000, limits.maxTextLength + 2_000),
   );
   if (!body.ok) return body.response;
   const title = normalizeTitle(body.data.title);
   const text = normalizeText(body.data.text);
+  const wantsBurnAfterRead = Boolean(body.data.burnAfterRead);
   const wantsLock = settings.pinEnabled && Boolean(body.data.locked);
   const pin = typeof body.data.pin === "string" ? body.data.pin.trim() : "";
 
@@ -250,9 +270,19 @@ notesRoutes.post("/api/items", async (c) => {
     );
   }
 
+  let code: string;
+  if (limits.allowCustomCode && typeof body.data.customCode === "string" && body.data.customCode.trim()) {
+    const reserved = await reserveCustomShareCode(env, body.data.customCode);
+    if (!reserved) {
+      return jsonError("That code is already taken or invalid (4-12 letters/numbers).", 409, "CODE_TAKEN");
+    }
+    code = reserved;
+  } else {
+    code = await createUniqueShareCode(env);
+  }
+
   const roomId = await getRoomId(c.req.raw, env.APP_SECRET);
   const id = randomBase64Url(16);
-  const code = await createUniqueShareCode(env);
   const deleteToken = randomBase64Url(32);
   const deleteTokenHash = await hmacHex(env.APP_SECRET, `delete:${deleteToken}`);
   const createdAt = Date.now();
@@ -268,9 +298,12 @@ notesRoutes.post("/api/items", async (c) => {
     env.DB.prepare(
       `INSERT INTO notes (
         id, room_id, title, body, locked, pin_salt, pin_hash, code,
-        delete_token_hash, created_at, expires_at, user_id
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    ).bind(id, roomId, title, text, wantsLock ? 1 : 0, pinSalt, pinHash, code, deleteTokenHash, createdAt, expiresAt, user?.id ?? null),
+        delete_token_hash, created_at, expires_at, user_id, burn_after_read
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).bind(
+      id, roomId, title, text, wantsLock ? 1 : 0, pinSalt, pinHash, code, deleteTokenHash, createdAt, expiresAt,
+      user?.id ?? null, wantsBurnAfterRead ? 1 : 0,
+    ),
     env.DB.prepare("INSERT INTO network_notes (room_id, note_id, source, added_at) VALUES (?, ?, 'mine', ?)").bind(
       roomId,
       id,
@@ -339,12 +372,16 @@ notesRoutes.get("/api/share/:code", async (c) => {
   const note = await getNoteByCode(env, c.req.param("code"));
   if (!note) return jsonError("This share code is invalid or has expired.", 404, "CODE_NOT_FOUND");
   const via = normalizeAccessMethodParam(url);
-  if (!note.locked && settings.crossNetworkAddEnabled) {
+  if (!note.locked && !note.burnAfterRead && settings.crossNetworkAddEnabled) {
     const roomId = await getRoomId(c.req.raw, env.APP_SECRET);
     await addNoteToRoom(env, note, roomId, constantTimeEqual(roomId, note.roomId) ? "mine" : "received");
   }
   await recordEvent(env, c.req.raw, "shared_note_opened", { via, locked: note.locked });
-  return jsonResponse(publicItemPayload(note, !note.locked));
+  const payload = publicItemPayload(note, !note.locked);
+  if (!note.locked && note.burnAfterRead) {
+    await env.DB.prepare("DELETE FROM notes WHERE id = ?").bind(note.id).run();
+  }
+  return jsonResponse(payload);
 });
 
 notesRoutes.post("/api/share/:code/unlock", async (c) => {
@@ -355,12 +392,16 @@ notesRoutes.post("/api/share/:code/unlock", async (c) => {
   if (!note) return jsonError("This share code is invalid or has expired.", 404, "CODE_NOT_FOUND");
   const result = await verifyPin(c.req.raw, env, note);
   if (!result.ok) return result.response;
-  if (settings.crossNetworkAddEnabled) {
+  if (!note.burnAfterRead && settings.crossNetworkAddEnabled) {
     const roomId = await getRoomId(c.req.raw, env.APP_SECRET);
     await addNoteToRoom(env, note, roomId, constantTimeEqual(roomId, note.roomId) ? "mine" : "received");
   }
   await recordEvent(env, c.req.raw, "pin_unlocked", { via: normalizeAccessMethodParam(url) });
-  return jsonResponse(publicItemPayload(note, true));
+  const payload = publicItemPayload(note, true);
+  if (note.burnAfterRead) {
+    await env.DB.prepare("DELETE FROM notes WHERE id = ?").bind(note.id).run();
+  }
+  return jsonResponse(payload);
 });
 
 notesRoutes.delete("/api/item/:itemId", async (c) => {

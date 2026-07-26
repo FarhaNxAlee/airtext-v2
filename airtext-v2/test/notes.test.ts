@@ -1,14 +1,42 @@
-import { SELF } from "cloudflare:test";
-import { describe, it, expect } from "vitest";
+import { SELF, env } from "cloudflare:test";
+import { describe, it, expect, beforeAll } from "vitest";
+import { hashPassword, randomBase64Url } from "../src/lib/crypto";
 
-async function createNote(overrides: Record<string, unknown> = {}) {
+async function createNote(overrides: Record<string, unknown> = {}, cookie?: string) {
+  const headers: Record<string, string> = { "content-type": "application/json" };
+  if (cookie) headers.cookie = cookie;
   const response = await SELF.fetch("https://example.com/api/items", {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers,
     body: JSON.stringify({ title: "Test note", text: "Hello world", ...overrides }),
   });
   const body = (await response.json()) as { ok: boolean; item: { id: string; code: string }; deleteToken: string };
   return { response, body };
+}
+
+const VANITY_TEST_EMAIL = "notes-test-pro@test.local";
+const VANITY_TEST_PASSWORD = "notes-test-pro-password";
+
+beforeAll(async () => {
+  const proRole = await env.DB.prepare("SELECT id FROM roles WHERE rank = 2").first<{ id: number }>();
+  const salt = randomBase64Url(16);
+  const passwordHash = await hashPassword(env.APP_SECRET, salt, VANITY_TEST_PASSWORD);
+  await env.DB.prepare(
+    `INSERT INTO users (id, email, password_salt, password_hash, display_name, role_id, status, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, 'active', ?)`,
+  )
+    .bind("notes-test-pro-id", VANITY_TEST_EMAIL, salt, passwordHash, "Vanity Tester", proRole!.id, Date.now())
+    .run();
+});
+
+async function loginAsPro() {
+  await new Promise((resolve) => setTimeout(resolve, 3100)); // login rate limit
+  const response = await SELF.fetch("https://example.com/api/auth/login", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ email: VANITY_TEST_EMAIL, password: VANITY_TEST_PASSWORD }),
+  });
+  return response.headers.get("set-cookie")!.split(";")[0];
 }
 
 describe("POST /api/items", () => {
@@ -105,4 +133,46 @@ describe("DELETE /api/item/:itemId", () => {
     const afterDelete = await SELF.fetch(`https://example.com/api/share/${created.item.code}`);
     expect(afterDelete.status).toBe(404);
   });
+});
+
+describe("burn-after-read", () => {
+  it("deletes the note after its first shared open, but anonymous requests can't set custom codes", async () => {
+    const { body: created } = await createNote({ burnAfterRead: true, customCode: "PICKME1" });
+    // customCode is silently ignored for anonymous (allowCustomCode: false) --
+    // a random code is generated instead, not the requested vanity one.
+    expect(created.item.code).not.toBe("PICKME1");
+
+    const firstOpen = await SELF.fetch(`https://example.com/api/share/${created.item.code}`);
+    expect(firstOpen.status).toBe(200);
+    const firstBody = (await firstOpen.json()) as { item: { text: string } };
+    expect(firstBody.item.text).toBe("Hello world");
+
+    const secondOpen = await SELF.fetch(`https://example.com/api/share/${created.item.code}`);
+    expect(secondOpen.status).toBe(404);
+  });
+
+  it("does not burn the creator's own local-board view", async () => {
+    const { body: created } = await createNote({ burnAfterRead: true });
+    const localOpen = await SELF.fetch(`https://example.com/api/local/item/${created.item.id}`);
+    expect(localOpen.status).toBe(200);
+    const stillThere = await SELF.fetch(`https://example.com/api/local/item/${created.item.id}`);
+    expect(stillThere.status).toBe(200);
+  });
+});
+
+describe("vanity share codes", () => {
+  it("lets a Pro user (allowCustomCode) pick their own code", async () => {
+    const cookie = await loginAsPro();
+    const { response, body } = await createNote({ customCode: "myvanity1" }, cookie);
+    expect(response.status).toBe(201);
+    expect(body.item.code).toBe("MYVANITY1");
+  });
+
+  it("rejects a code that's already taken", async () => {
+    const cookie = await loginAsPro();
+    await createNote({ customCode: "taken123" }, cookie);
+    await new Promise((resolve) => setTimeout(resolve, 4100)); // clear the create-note cooldown
+    const { response } = await createNote({ customCode: "taken123" }, cookie);
+    expect(response.status).toBe(409);
+  }, 10_000);
 });
