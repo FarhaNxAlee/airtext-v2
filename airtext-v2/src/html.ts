@@ -302,8 +302,10 @@ const APP_SHELL = String.raw`<!doctype html>
           <svg viewBox="0 0 24 24" class="h-7 w-7 text-slate-500" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M12 16V4M6 10l6-6 6 6"/><path d="M4 16v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/></svg>
           <span id="files-drop-hint" class="text-sm text-slate-400">Drag and drop a file here, or click to choose one.</span>
           <span id="file-input-name" class="text-xs text-slate-600"></span>
-          <input id="file-input" name="file" type="file" class="sr-only">
+          <input id="file-input" name="file" type="file" multiple class="sr-only">
         </label>
+        <div id="staged-files-list" class="mt-3 hidden grid gap-1 text-xs text-slate-400"></div>
+        <p id="staged-files-total" class="mt-1 hidden text-xs text-slate-500"></p>
 
         <div class="mt-4 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div class="flex flex-1 items-center gap-4">
@@ -669,6 +671,7 @@ const APP_SHELL = String.raw`<!doctype html>
         </form>
 
         <div id="modal-content" class="hidden">
+          <p id="modal-shared-by" class="mb-2 hidden text-xs text-neutral-500"></p>
           <div class="overflow-hidden rounded-xl border border-white/[.07] bg-black/20">
             <div class="flex items-center justify-between border-b border-white/5 px-4 py-3">
               <p class="text-xs text-neutral-600">TEXT</p>
@@ -726,12 +729,9 @@ const APP_SHELL = String.raw`<!doctype html>
         </form>
 
         <div id="file-modal-content" class="hidden">
-          <div class="overflow-hidden rounded-xl border border-white/[.07] bg-black/20 p-5">
-            <p id="file-modal-filename" class="truncate text-sm text-slate-200"></p>
-            <p id="file-modal-meta" class="mt-1 text-xs text-neutral-500"></p>
-          </div>
+          <p id="file-modal-shared-by" class="mb-2 hidden text-xs text-neutral-500"></p>
+          <div id="file-modal-list" class="grid gap-2"></div>
           <div class="mt-4 flex flex-col gap-2 sm:flex-row">
-            <a id="file-modal-download" href="#" class="flex-1 rounded-md bg-violet-500 px-4 py-3 text-center text-sm font-semibold text-white transition hover:bg-violet-400">Download</a>
             <button type="button" data-action="show-current-file-qr" class="flex-1 rounded-md border border-white/10 px-4 py-3 text-sm text-neutral-300 transition hover:border-violet-500/60 hover:bg-violet-500/10 hover:text-white">Code & QR</button>
             <button id="delete-file-button" type="button" data-action="delete-current-file" class="hidden flex-1 items-center justify-center rounded-md border border-red-500/20 px-4 py-3 text-sm text-red-300 transition hover:bg-red-500/10">Delete</button>
           </div>

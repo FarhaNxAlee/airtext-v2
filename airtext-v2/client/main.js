@@ -86,6 +86,8 @@ import "./style.css";
         el.fileLockToggle = document.getElementById("file-lock-toggle");
         el.filePinFieldWrap = document.getElementById("file-pin-field-wrap");
         el.filePin = document.getElementById("file-pin");
+        el.stagedFilesList = document.getElementById("staged-files-list");
+        el.stagedFilesTotal = document.getElementById("staged-files-total");
         el.filesDropZone = document.getElementById("files-drop-zone");
         el.filesBoardEmpty = document.getElementById("files-board-empty");
         el.filesBoardList = document.getElementById("files-board-list");
@@ -101,9 +103,8 @@ import "./style.css";
         el.fileUnlockPin = document.getElementById("file-unlock-pin");
         el.fileUnlockSubmit = document.getElementById("file-unlock-submit");
         el.fileModalContent = document.getElementById("file-modal-content");
-        el.fileModalFilename = document.getElementById("file-modal-filename");
-        el.fileModalMeta = document.getElementById("file-modal-meta");
-        el.fileModalDownload = document.getElementById("file-modal-download");
+        el.fileModalSharedBy = document.getElementById("file-modal-shared-by");
+        el.fileModalList = document.getElementById("file-modal-list");
         el.deleteFileButton = document.getElementById("delete-file-button");
 
         el.qrtoolForm = document.getElementById("qrtool-form");
@@ -136,6 +137,7 @@ import "./style.css";
         el.unlockSubmit = document.getElementById("unlock-submit");
         el.modalContent = document.getElementById("modal-content");
         el.modalText = document.getElementById("modal-text");
+        el.modalSharedBy = document.getElementById("modal-shared-by");
         el.deleteButton = document.getElementById("delete-item-button");
 
         el.qrModal = document.getElementById("qr-modal");
@@ -244,17 +246,14 @@ import "./style.css";
           if (el.fileLockToggle.checked) window.setTimeout(function () { el.filePin.focus(); }, 60);
           else el.filePin.value = "";
         });
-        el.fileInput.addEventListener("change", function () {
-          var file = el.fileInput.files && el.fileInput.files[0];
-          el.fileInputName.textContent = file ? file.name : "";
-        });
+        el.fileInput.addEventListener("change", function () { renderStagedFiles(); });
         el.filesDropZone.addEventListener("dragover", function (event) { event.preventDefault(); });
         el.filesDropZone.addEventListener("drop", function (event) {
           event.preventDefault();
-          var dropped = event.dataTransfer && event.dataTransfer.files && event.dataTransfer.files[0];
-          if (dropped) {
-            el.fileInput.files = event.dataTransfer.files;
-            el.fileInputName.textContent = dropped.name;
+          var dropped = event.dataTransfer && event.dataTransfer.files;
+          if (dropped && dropped.length) {
+            el.fileInput.files = dropped;
+            renderStagedFiles();
           }
         });
         el.filesRefreshButton.addEventListener("click", function () { loadLocalFiles(true); });
@@ -485,6 +484,8 @@ import "./style.css";
           lockBadge.textContent = item.locked ? "PIN locked" : "Open";
           meta.appendChild(sourceBadge);
           meta.appendChild(lockBadge);
+          var sharedByBadge = buildSharedByBadge(item.sharedBy);
+          if (sharedByBadge) meta.appendChild(sharedByBadge);
 
           var title = document.createElement("h3");
           title.className = "note-title";
@@ -603,6 +604,12 @@ import "./style.css";
         if (typeof item.text === "string") {
           el.unlockForm.classList.add("hidden");
           el.modalContent.classList.remove("hidden");
+          if (item.sharedBy) {
+            el.modalSharedBy.textContent = "Shared by " + item.sharedBy.name + " · " + item.sharedBy.role;
+            el.modalSharedBy.classList.remove("hidden");
+          } else {
+            el.modalSharedBy.classList.add("hidden");
+          }
           renderLinkedText(el.modalText, item.text);
           updateDeleteButton(item.id);
           if (source === "share") {
@@ -755,11 +762,24 @@ import "./style.css";
         if (APP.maintenanceMode || !APP.fileSharingEnabled) {
           return toast("File sharing is currently disabled.", "error");
         }
-        var file = el.fileInput.files && el.fileInput.files[0];
-        if (!file) return toast("Choose a file to share.", "error");
-        var maxBytes = (APP.maxFileSizeMB || 25) * 1024 * 1024;
-        if (file.size > maxBytes) {
-          return toast("Files must be " + (APP.maxFileSizeMB || 25) + "MB or smaller.", "error");
+        var files = el.fileInput.files ? Array.from(el.fileInput.files) : [];
+        if (!files.length) return toast("Choose at least one file to share.", "error");
+
+        var maxFileBytes = (APP.maxFileSizeMB || 2) * 1024 * 1024;
+        var maxBatchBytes = (APP.maxBatchTotalMB || 30) * 1024 * 1024;
+        var maxFiles = APP.maxFilesPerBatch || 15;
+        if (files.length > maxFiles) {
+          return toast("You can attach up to " + maxFiles + " files per share.", "error");
+        }
+        var total = 0;
+        for (var i = 0; i < files.length; i += 1) {
+          total += files[i].size;
+          if (files[i].size > maxFileBytes) {
+            return toast("Each file must be " + (APP.maxFileSizeMB || 2) + "MB or smaller (\"" + files[i].name + "\" is too large).", "error");
+          }
+        }
+        if (total > maxBatchBytes) {
+          return toast("This upload totals more than the " + (APP.maxBatchTotalMB || 30) + "MB batch limit.", "error");
         }
 
         var locked = APP.pinEnabled && el.fileLockToggle.checked;
@@ -769,7 +789,7 @@ import "./style.css";
         }
 
         var form = new FormData();
-        form.append("file", file);
+        files.forEach(function (file) { form.append("file", file); });
         form.append("title", el.fileTitle.value.trim());
         form.append("locked", locked ? "1" : "0");
         if (locked) form.append("pin", pin);
@@ -777,12 +797,12 @@ import "./style.css";
         setButtonLoading(el.fileUploadSubmit, true, "Uploading…");
         try {
           var response = await apiFetch("/api/files", { method: "POST", body: form });
-          saveDeleteToken("file:" + response.file.id, response.deleteToken);
-          upsertLocalFile(response.file);
+          saveDeleteToken("file:" + response.group.id, response.deleteToken);
+          upsertLocalFile(response.group);
           renderFilesBoard();
           resetFileUploadForm();
-          showQr(response.file.code, response.shareUrl);
-          toast("File uploaded. It expires in " + formatDuration(APP.fileTtlSeconds || APP.ttlSeconds) + ".", "success");
+          showQr(response.group.code, response.shareUrl);
+          toast(response.message || "Uploaded.", "success");
         } catch (error) {
           toast(error.message || "Unable to upload the file.", "error");
         } finally {
@@ -794,6 +814,43 @@ import "./style.css";
         el.fileUploadForm.reset();
         el.fileInputName.textContent = "";
         el.filePinFieldWrap.classList.add("hidden");
+        renderStagedFiles();
+      }
+
+      function renderStagedFiles() {
+        var files = el.fileInput.files ? Array.from(el.fileInput.files) : [];
+        el.fileInputName.textContent = files.length === 1 ? files[0].name : files.length ? files.length + " files selected" : "";
+        el.stagedFilesList.textContent = "";
+
+        if (!files.length) {
+          el.stagedFilesList.classList.add("hidden");
+          el.stagedFilesTotal.classList.add("hidden");
+          return;
+        }
+
+        var total = 0;
+        files.forEach(function (file) {
+          total += file.size;
+          var row = document.createElement("div");
+          row.className = "flex items-center justify-between gap-3";
+          var name = document.createElement("span");
+          name.className = "truncate";
+          name.textContent = file.name;
+          var size = document.createElement("span");
+          size.className = "shrink-0 text-neutral-600";
+          size.textContent = formatBytes(file.size);
+          row.appendChild(name);
+          row.appendChild(size);
+          el.stagedFilesList.appendChild(row);
+        });
+        el.stagedFilesList.classList.remove("hidden");
+
+        var maxBatchMB = APP.maxBatchTotalMB || 30;
+        var maxFiles = APP.maxFilesPerBatch || 15;
+        el.stagedFilesTotal.textContent = files.length + " file" + (files.length === 1 ? "" : "s") + " · " +
+          formatBytes(total) + " of " + maxBatchMB + "MB max, up to " + maxFiles + " files";
+        el.stagedFilesTotal.classList.remove("hidden");
+        el.stagedFilesTotal.classList.toggle("text-red-400", total > maxBatchMB * 1024 * 1024 || files.length > maxFiles);
       }
 
       function upsertLocalFile(file) {
@@ -851,10 +908,12 @@ import "./style.css";
           lockBadge.textContent = item.locked ? "PIN locked" : "Open";
           var sizeBadge = document.createElement("span");
           sizeBadge.className = "note-badge";
-          sizeBadge.textContent = formatBytes(item.sizeBytes);
+          sizeBadge.textContent = (item.fileCount > 1 ? item.fileCount + " files · " : "") + formatBytes(item.totalSizeBytes);
           meta.appendChild(sourceBadge);
           meta.appendChild(lockBadge);
           meta.appendChild(sizeBadge);
+          var sharedByBadge = buildSharedByBadge(item.sharedBy);
+          if (sharedByBadge) meta.appendChild(sharedByBadge);
 
           var title = document.createElement("h3");
           title.className = "note-title";
@@ -900,7 +959,7 @@ import "./style.css";
         openFileModal();
         try {
           var response = await apiFetch("/api/local/file/" + encodeURIComponent(fileId));
-          showFileResponse(response.file, "local", null);
+          showFileResponse(response.group, "local", null);
         } catch (error) {
           showFileModalError(error.message || "Unable to open this file.");
         }
@@ -920,34 +979,38 @@ import "./style.css";
 
         try {
           var response = await apiFetch("/api/share/file/" + encodeURIComponent(code) + "?via=" + encodeURIComponent(via));
-          showFileResponse(response.file, "share", code);
+          showFileResponse(response.group, "share", code);
         } catch (error) {
           showFileModalError(error.message || "Unable to open this share code.");
         }
       }
 
-      function showFileResponse(file, source, code) {
-        state.currentFile = file;
-        state.currentFileCode = code || file.code;
+      function showFileResponse(group, source, code) {
+        state.currentFile = group;
+        state.currentFileCode = code || group.code;
 
         el.fileModalLoading.classList.add("hidden");
         el.fileModalError.classList.add("hidden");
-        el.fileModalTitle.textContent = file.title;
-        el.fileModalExpiry.setAttribute("data-expires", String(file.expiresAt));
-        el.fileModalExpiry.textContent = formatRemaining(file.expiresAt);
-        setFileLockBadge(file.locked);
+        el.fileModalTitle.textContent = group.title;
+        el.fileModalExpiry.setAttribute("data-expires", String(group.expiresAt));
+        el.fileModalExpiry.textContent = formatRemaining(group.expiresAt);
+        setFileLockBadge(group.locked);
 
-        if (file.downloadUrl) {
+        var isUnlocked = group.files && group.files.length && group.files[0].downloadUrl;
+        if (isUnlocked) {
           el.fileUnlockForm.classList.add("hidden");
           el.fileModalContent.classList.remove("hidden");
-          el.fileModalFilename.textContent = file.filename;
-          el.fileModalMeta.textContent = formatBytes(file.sizeBytes) + " · " + file.downloadCount + " downloads";
-          el.fileModalDownload.href = file.downloadUrl;
-          el.fileModalDownload.setAttribute("download", file.filename);
-          updateFileDeleteButton(file.id);
+          if (group.sharedBy) {
+            el.fileModalSharedBy.textContent = "Shared by " + group.sharedBy.name + " · " + group.sharedBy.role;
+            el.fileModalSharedBy.classList.remove("hidden");
+          } else {
+            el.fileModalSharedBy.classList.add("hidden");
+          }
+          renderFileModalList(group.files);
+          updateFileDeleteButton(group.id);
           if (source === "share") {
-            upsertLocalFile(Object.assign({}, file, {
-              source: getDeleteToken("file:" + file.id) ? "mine" : "received",
+            upsertLocalFile(Object.assign({}, group, {
+              source: getDeleteToken("file:" + group.id) ? "mine" : "received",
               addedAt: Date.now()
             }));
             renderFilesBoard();
@@ -958,6 +1021,32 @@ import "./style.css";
           el.fileUnlockPin.value = "";
           window.setTimeout(function () { el.fileUnlockPin.focus(); }, 120);
         }
+      }
+
+      function renderFileModalList(files) {
+        el.fileModalList.textContent = "";
+        files.forEach(function (file) {
+          var row = document.createElement("div");
+          row.className = "flex items-center justify-between gap-3 overflow-hidden rounded-xl border border-white/[.07] bg-black/20 p-4";
+          var info = document.createElement("div");
+          info.className = "min-w-0";
+          var name = document.createElement("p");
+          name.className = "truncate text-sm text-slate-200";
+          name.textContent = file.filename;
+          var meta = document.createElement("p");
+          meta.className = "mt-1 text-xs text-neutral-500";
+          meta.textContent = formatBytes(file.sizeBytes) + " · " + file.downloadCount + " downloads";
+          info.appendChild(name);
+          info.appendChild(meta);
+          var download = document.createElement("a");
+          download.href = file.downloadUrl;
+          download.setAttribute("download", file.filename);
+          download.className = "shrink-0 rounded-md bg-violet-500 px-4 py-2 text-center text-sm font-semibold text-white transition hover:bg-violet-400";
+          download.textContent = "Download";
+          row.appendChild(info);
+          row.appendChild(download);
+          el.fileModalList.appendChild(row);
+        });
       }
 
       async function unlockCurrentFile(event) {
@@ -979,7 +1068,7 @@ import "./style.css";
             headers: { "content-type": "application/json" },
             body: JSON.stringify({ pin: pin })
           });
-          showFileResponse(response.file, state.currentFileCode ? "share" : "local", state.currentFileCode);
+          showFileResponse(response.group, state.currentFileCode ? "share" : "local", state.currentFileCode);
           toast("File unlocked.", "success");
         } catch (error) {
           toast(error.message || "Unable to unlock file.", "error");
@@ -2110,6 +2199,21 @@ import "./style.css";
           row.appendChild(button);
           el.adminFiles.appendChild(row);
         });
+      }
+
+      var SHARED_BY_RANK_COLORS = { 0: "#f5c94a", 1: "#c9c9d6", 2: "#c98a4a" };
+
+      function buildSharedByBadge(sharedBy) {
+        if (!sharedBy || !sharedBy.name) return null;
+        var badge = document.createElement("span");
+        badge.className = "note-badge";
+        badge.textContent = sharedBy.name + " · " + sharedBy.role;
+        var color = SHARED_BY_RANK_COLORS[sharedBy.rank];
+        if (color) {
+          badge.style.color = color;
+          badge.style.borderColor = color;
+        }
+        return badge;
       }
 
       function formatBytes(bytes) {

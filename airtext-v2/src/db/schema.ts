@@ -124,31 +124,28 @@ export const networkNotes = sqliteTable(
   }),
 );
 
+/**
+ * One file within a file_groups batch. All the per-share metadata (title,
+ * PIN, code, expiry, delete token, ownership) lives on the group, not
+ * here -- a group of size 1 is just a normal single-file share, so
+ * there's only one code path for file sharing (see Phase 5 in the plan).
+ */
 export const files = sqliteTable(
   "files",
   {
     id: text("id").primaryKey(),
-    roomId: text("room_id").notNull(),
-    title: text("title").notNull(),
+    groupId: text("group_id")
+      .notNull()
+      .references(() => fileGroups.id, { onDelete: "cascade" }),
     filename: text("filename").notNull(),
     mime: text("mime").notNull().default("application/octet-stream"),
     sizeBytes: integer("size_bytes").notNull(),
     r2Key: text("r2_key").notNull(),
-    locked: integer("locked").notNull().default(0),
-    pinSalt: text("pin_salt"),
-    pinHash: text("pin_hash"),
-    code: text("code").notNull().unique(),
-    deleteTokenHash: text("delete_token_hash").notNull(),
     downloadCount: integer("download_count").notNull().default(0),
     createdAt: integer("created_at").notNull(),
-    expiresAt: integer("expires_at").notNull(),
-    userId: text("user_id").references(() => users.id),
-    burnAfterRead: integer("burn_after_read").notNull().default(0),
   },
   (table) => ({
-    codeIdx: index("idx_files_code").on(table.code),
-    expiresIdx: index("idx_files_expires").on(table.expiresAt),
-    createdIdx: index("idx_files_created").on(sql`${table.createdAt} desc`),
+    groupIdx: index("idx_files_group").on(table.groupId),
   }),
 );
 
@@ -156,14 +153,14 @@ export const networkFiles = sqliteTable(
   "network_files",
   {
     roomId: text("room_id").notNull(),
-    fileId: text("file_id")
+    groupId: text("group_id")
       .notNull()
-      .references(() => files.id, { onDelete: "cascade" }),
+      .references(() => fileGroups.id, { onDelete: "cascade" }),
     source: text("source", { enum: ["mine", "received"] }).notNull(),
     addedAt: integer("added_at").notNull(),
   },
   (table) => ({
-    pk: primaryKey({ columns: [table.roomId, table.fileId] }),
+    pk: primaryKey({ columns: [table.roomId, table.groupId] }),
     roomIdx: index("idx_network_files_room").on(table.roomId, sql`${table.addedAt} desc`),
     sourceCheck: check("network_files_source_check", sql`${table.source} IN ('mine', 'received')`),
   }),

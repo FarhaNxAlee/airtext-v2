@@ -2,14 +2,23 @@ import { Hono } from "hono";
 import type { Env } from "../types";
 import { CONFIG } from "../lib/config";
 import { getSiteSettings } from "../lib/settings";
+import { getEffectiveLimits } from "../lib/limits";
 import { jsonResponse, jsonError, readJsonBody } from "../lib/http";
 import { hmacHex, hashPin, constantTimeEqual, randomBase64Url, randomShareCode } from "../lib/crypto";
 import { normalizeTitle, normalizeText, normalizeShareCode, formatServerDuration, isExpired } from "../lib/util";
-import { getRoomId, getClientIpHash } from "../middleware/auth";
+import { getRoomId, getClientIpHash, getAuthenticatedUser } from "../middleware/auth";
 import { enforceCooldown } from "../middleware/rateLimit";
 import { recordEvent } from "../lib/analytics";
 
-/** Ported from airtext-worker-modern.js:1621-1870 (the live `d1Handle*` note handlers). */
+/** Ported from airtext-worker-modern.js:1621-1870 (the live `d1Handle*` note handlers).
+ *  Phase 5 adds optional user attribution (userId + sharedBy on the public payload)
+ *  on top of the original anonymous-only model -- anonymous shares are unaffected. */
+
+export interface SharedBy {
+  name: string;
+  role: string;
+  rank: number;
+}
 
 export interface NoteRow {
   id: string;
@@ -23,6 +32,8 @@ export interface NoteRow {
   deleteTokenHash: string;
   createdAt: number;
   expiresAt: number;
+  userId: string | null;
+  sharedBy: SharedBy | null;
 }
 
 interface RawNoteRow {
@@ -37,7 +48,15 @@ interface RawNoteRow {
   delete_token_hash?: string;
   created_at?: number;
   expires_at?: number;
+  user_id?: string | null;
+  shared_by_name?: string | null;
+  shared_by_role?: string | null;
+  shared_by_rank?: number | null;
 }
+
+// Shared by every query that needs to attribute a note to its creator.
+const SHARED_BY_JOIN = `LEFT JOIN users u ON u.id = n.user_id LEFT JOIN roles r ON r.id = u.role_id`;
+const SHARED_BY_COLUMNS = `u.display_name AS shared_by_name, r.name AS shared_by_role, r.rank AS shared_by_rank`;
 
 function rowToNote(row: RawNoteRow | null | undefined): NoteRow | null {
   if (!row) return null;
@@ -53,11 +72,17 @@ function rowToNote(row: RawNoteRow | null | undefined): NoteRow | null {
     deleteTokenHash: String(row.delete_token_hash || ""),
     createdAt: Number(row.created_at || 0),
     expiresAt: Number(row.expires_at || 0),
+    userId: row.user_id || null,
+    sharedBy: row.shared_by_name
+      ? { name: String(row.shared_by_name), role: String(row.shared_by_role || ""), rank: Number(row.shared_by_rank) }
+      : null,
   };
 }
 
 async function getNoteById(env: Env, noteId: string): Promise<NoteRow | null> {
-  const row = await env.DB.prepare("SELECT * FROM notes WHERE id = ? AND expires_at > ?")
+  const row = await env.DB.prepare(
+    `SELECT n.*, ${SHARED_BY_COLUMNS} FROM notes n ${SHARED_BY_JOIN} WHERE n.id = ? AND n.expires_at > ?`,
+  )
     .bind(noteId, Date.now())
     .first<RawNoteRow>();
   return rowToNote(row);
@@ -65,7 +90,9 @@ async function getNoteById(env: Env, noteId: string): Promise<NoteRow | null> {
 
 async function getNoteByCode(env: Env, rawCode: string): Promise<NoteRow | null> {
   const code = normalizeShareCode(rawCode);
-  const row = await env.DB.prepare("SELECT * FROM notes WHERE code = ? AND expires_at > ?")
+  const row = await env.DB.prepare(
+    `SELECT n.*, ${SHARED_BY_COLUMNS} FROM notes n ${SHARED_BY_JOIN} WHERE n.code = ? AND n.expires_at > ?`,
+  )
     .bind(code, Date.now())
     .first<RawNoteRow>();
   return rowToNote(row);
@@ -99,6 +126,7 @@ function publicItemPayload(note: NoteRow, includeText: boolean) {
       code: note.code,
       createdAt: Number(note.createdAt),
       expiresAt: Number(note.expiresAt),
+      ...(note.sharedBy ? { sharedBy: note.sharedBy } : {}),
       ...(includeText ? { text: note.text } : {}),
     },
   };
@@ -140,15 +168,19 @@ notesRoutes.get("/api/local/items", async (c) => {
   const roomId = await getRoomId(c.req.raw, c.env.APP_SECRET);
   const result = await c.env.DB.prepare(
     `SELECT n.id, n.title, n.locked, n.code, n.created_at, n.expires_at,
-            nn.added_at, nn.source
+            nn.added_at, nn.source, ${SHARED_BY_COLUMNS}
      FROM network_notes nn
      JOIN notes n ON n.id = nn.note_id
+     ${SHARED_BY_JOIN}
      WHERE nn.room_id = ? AND n.expires_at > ?
      ORDER BY nn.added_at DESC
      LIMIT ?`,
   )
     .bind(roomId, Date.now(), settings.maxLocalItems)
-    .all<{ id: string; title: string; locked: number; code: string; created_at: number; expires_at: number; added_at: number; source: string }>();
+    .all<{
+      id: string; title: string; locked: number; code: string; created_at: number; expires_at: number;
+      added_at: number; source: string; shared_by_name: string | null; shared_by_role: string | null; shared_by_rank: number | null;
+    }>();
 
   return jsonResponse({
     ok: true,
@@ -161,6 +193,9 @@ notesRoutes.get("/api/local/items", async (c) => {
       addedAt: Number(row.added_at || row.created_at || 0),
       expiresAt: Number(row.expires_at || 0),
       source: row.source === "received" ? "received" : "mine",
+      ...(row.shared_by_name
+        ? { sharedBy: { name: row.shared_by_name, role: row.shared_by_role || "", rank: Number(row.shared_by_rank) } }
+        : {}),
     })),
     expiresAfterSeconds: settings.ttlSeconds,
     networkNotice: "The available board is grouped by a private hash of the public IP address visible to Cloudflare.",
@@ -175,9 +210,12 @@ notesRoutes.post("/api/items", async (c) => {
     return jsonError("New notes are temporarily unavailable.", 503, "NOTES_DISABLED");
   }
 
+  const user = await getAuthenticatedUser(c.req.raw, env);
+  const limits = await getEffectiveLimits(env, user);
+
   const body = await readJsonBody<{ title?: string; text?: string; locked?: boolean; pin?: string }>(
     c.req.raw,
-    Math.max(24_000, settings.maxTextLength + 2_000),
+    Math.max(24_000, limits.maxTextLength + 2_000),
   );
   if (!body.ok) return body.response;
   const title = normalizeTitle(body.data.title);
@@ -190,8 +228,8 @@ notesRoutes.post("/api/items", async (c) => {
     return jsonError(`Title must be ${settings.maxTitleLength} characters or fewer.`, 400, "TITLE_TOO_LONG");
   }
   if (!text) return jsonError("Please enter text to share.", 400, "TEXT_REQUIRED");
-  if (text.length > settings.maxTextLength) {
-    return jsonError(`Text must be ${settings.maxTextLength.toLocaleString()} characters or fewer.`, 400, "TEXT_TOO_LONG");
+  if (text.length > limits.maxTextLength) {
+    return jsonError(`Text must be ${limits.maxTextLength.toLocaleString()} characters or fewer.`, 400, "TEXT_TOO_LONG");
   }
   if (wantsLock && (pin.length < CONFIG.MIN_PIN_LENGTH || pin.length > CONFIG.MAX_PIN_LENGTH)) {
     return jsonError(
@@ -218,7 +256,7 @@ notesRoutes.post("/api/items", async (c) => {
   const deleteToken = randomBase64Url(32);
   const deleteTokenHash = await hmacHex(env.APP_SECRET, `delete:${deleteToken}`);
   const createdAt = Date.now();
-  const expiresAt = createdAt + settings.ttlSeconds * 1000;
+  const expiresAt = createdAt + limits.ttlSeconds * 1000;
   let pinSalt: string | null = null;
   let pinHash: string | null = null;
   if (wantsLock) {
@@ -230,9 +268,9 @@ notesRoutes.post("/api/items", async (c) => {
     env.DB.prepare(
       `INSERT INTO notes (
         id, room_id, title, body, locked, pin_salt, pin_hash, code,
-        delete_token_hash, created_at, expires_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    ).bind(id, roomId, title, text, wantsLock ? 1 : 0, pinSalt, pinHash, code, deleteTokenHash, createdAt, expiresAt),
+        delete_token_hash, created_at, expires_at, user_id
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).bind(id, roomId, title, text, wantsLock ? 1 : 0, pinSalt, pinHash, code, deleteTokenHash, createdAt, expiresAt, user?.id ?? null),
     env.DB.prepare("INSERT INTO network_notes (room_id, note_id, source, added_at) VALUES (?, ?, 'mine', ?)").bind(
       roomId,
       id,
@@ -244,10 +282,13 @@ notesRoutes.post("/api/items", async (c) => {
   return jsonResponse(
     {
       ok: true,
-      item: { id, title, locked: wantsLock, code, createdAt, addedAt: createdAt, expiresAt, source: "mine" },
+      item: {
+        id, title, locked: wantsLock, code, createdAt, addedAt: createdAt, expiresAt, source: "mine",
+        ...(user ? { sharedBy: { name: user.displayName, role: user.roleName, rank: user.rank } } : {}),
+      },
       deleteToken,
       shareUrl: `${url.origin}/s/${code}`,
-      message: `Note created. It will expire automatically in ${formatServerDuration(settings.ttlSeconds)}.`,
+      message: `Note created. It will expire automatically in ${formatServerDuration(limits.ttlSeconds)}.`,
     },
     201,
   );
@@ -258,8 +299,9 @@ notesRoutes.get("/api/local/item/:itemId", async (c) => {
   const itemId = c.req.param("itemId");
   const roomId = await getRoomId(c.req.raw, env.APP_SECRET);
   const row = await env.DB.prepare(
-    `SELECT n.* FROM notes n
+    `SELECT n.*, ${SHARED_BY_COLUMNS} FROM notes n
      JOIN network_notes nn ON nn.note_id = n.id
+     ${SHARED_BY_JOIN}
      WHERE n.id = ? AND nn.room_id = ? AND n.expires_at > ?`,
   )
     .bind(itemId, roomId, Date.now())
@@ -275,8 +317,9 @@ notesRoutes.post("/api/local/item/:itemId/unlock", async (c) => {
   const itemId = c.req.param("itemId");
   const roomId = await getRoomId(c.req.raw, env.APP_SECRET);
   const row = await env.DB.prepare(
-    `SELECT n.* FROM notes n
+    `SELECT n.*, ${SHARED_BY_COLUMNS} FROM notes n
      JOIN network_notes nn ON nn.note_id = n.id
+     ${SHARED_BY_JOIN}
      WHERE n.id = ? AND nn.room_id = ? AND n.expires_at > ?`,
   )
     .bind(itemId, roomId, Date.now())

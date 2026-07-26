@@ -8,7 +8,7 @@ import { getClientIpHash, requireAdmin, getSession, createSessionToken, buildSes
 import { enforceCooldown } from "../middleware/rateLimit";
 import { recordEvent } from "../lib/analytics";
 import { getNoteById } from "./notes";
-import { getFileById } from "./files";
+import { getGroupById, deleteGroupAndFiles } from "./files";
 
 /** Ported from airtext-worker-modern.js:793-797, 830-836, 2328-2516; login/session
  *  now check the `users` table (role rank 0) instead of the ADMIN_PASSWORD secret --
@@ -100,16 +100,18 @@ adminRoutes.get("/api/admin/dashboard", async (c) => {
     env.DB.prepare("SELECT COUNT(DISTINCT network) AS count FROM analytics"),
     env.DB.prepare("SELECT COUNT(*) AS count FROM notes WHERE expires_at > ?").bind(now),
     env.DB.prepare(
-      `SELECT id, title, filename, mime, size_bytes, locked, code, download_count, created_at, expires_at,
-              substr(room_id, 1, 12) AS room_hash
-       FROM files WHERE expires_at > ? ORDER BY created_at DESC LIMIT 100`,
+      `SELECT g.id, g.title, g.locked, g.code, g.total_size_bytes, g.created_at, g.expires_at,
+              substr(g.room_id, 1, 12) AS room_hash,
+              (SELECT COUNT(*) FROM files WHERE files.group_id = g.id) AS file_count,
+              (SELECT COALESCE(SUM(download_count), 0) FROM files WHERE files.group_id = g.id) AS download_count
+       FROM file_groups g WHERE g.expires_at > ? ORDER BY g.created_at DESC LIMIT 100`,
     ).bind(now),
-    env.DB.prepare("SELECT COUNT(*) AS count, COALESCE(SUM(size_bytes), 0) AS bytes FROM files WHERE expires_at > ?").bind(now),
+    env.DB.prepare("SELECT COUNT(*) AS count, COALESCE(SUM(total_size_bytes), 0) AS bytes FROM file_groups WHERE expires_at > ?").bind(now),
   ]);
 
   interface NoteRow { id: string; title: string; locked: number; code: string; created_at: number; expires_at: number; room_hash: string }
   interface FeedbackRow { id: string; category: string; message: string; email: string; rating: number; status: string; created_at: number; updated_at: number }
-  interface FileRow { id: string; title: string; filename: string; mime: string; size_bytes: number; locked: number; code: string; download_count: number; created_at: number; expires_at: number; room_hash: string }
+  interface FileRow { id: string; title: string; total_size_bytes: number; locked: number; code: string; download_count: number; file_count: number; created_at: number; expires_at: number; room_hash: string }
 
   const notesRows = (results[0].results || []) as unknown as NoteRow[];
   const feedbackRows = (results[1].results || []) as unknown as FeedbackRow[];
@@ -152,9 +154,8 @@ adminRoutes.get("/api/admin/dashboard", async (c) => {
   const files = filesRows.map((row) => ({
     id: String(row.id),
     title: String(row.title || "Untitled"),
-    filename: String(row.filename || "file"),
-    mime: String(row.mime || "application/octet-stream"),
-    sizeBytes: Number(row.size_bytes || 0),
+    fileCount: Number(row.file_count || 0),
+    totalSizeBytes: Number(row.total_size_bytes || 0),
     locked: Boolean(row.locked),
     code: String(row.code || ""),
     downloadCount: Number(row.download_count || 0),
@@ -233,12 +234,9 @@ adminRoutes.delete("/api/admin/file/:fileId", async (c) => {
   const env = c.env;
   const authError = await requireAdmin(c.req.raw, env, true);
   if (authError) return authError;
-  const file = await getFileById(env, c.req.param("fileId"));
-  if (!file) return jsonError("The file has expired or does not exist.", 404, "NOT_FOUND");
-  await env.DB.prepare("DELETE FROM files WHERE id = ?").bind(file.id).run();
-  if (env.FILES_BUCKET) {
-    await env.FILES_BUCKET.delete(file.r2Key).catch(() => {});
-  }
+  const group = await getGroupById(env, c.req.param("fileId"));
+  if (!group) return jsonError("The file has expired or does not exist.", 404, "NOT_FOUND");
+  await deleteGroupAndFiles(env, group.id);
   await recordEvent(env, c.req.raw, "file_deleted", { by: "admin" });
   return jsonResponse({ ok: true, message: "File deleted." });
 });

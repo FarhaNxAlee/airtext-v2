@@ -24,22 +24,30 @@ export async function maybeCleanupD1(env: Env): Promise<void> {
 
 export async function purgeExpiredFiles(env: Env, now: number): Promise<void> {
   try {
-    const expired = await env.DB.prepare("SELECT id, r2_key FROM files WHERE expires_at <= ? LIMIT 200")
+    const expiredGroups = await env.DB.prepare("SELECT id FROM file_groups WHERE expires_at <= ? LIMIT 200")
       .bind(now)
-      .all<{ id: string; r2_key: string }>();
-    const rows = expired.results || [];
-    if (!rows.length) return;
-    if (env.FILES_BUCKET) {
-      const keys = rows.map((row) => String(row.r2_key)).filter(Boolean);
+      .all<{ id: string }>();
+    const groupIds = (expiredGroups.results || []).map((row) => row.id);
+    if (!groupIds.length) return;
+    const placeholders = groupIds.map(() => "?").join(",");
+
+    const filesToDelete = await env.DB.prepare(`SELECT r2_key FROM files WHERE group_id IN (${placeholders})`)
+      .bind(...groupIds)
+      .all<{ r2_key: string }>();
+    const keys = (filesToDelete.results || []).map((row) => String(row.r2_key)).filter(Boolean);
+    if (env.FILES_BUCKET && keys.length) {
       try {
         await env.FILES_BUCKET.delete(keys);
       } catch (error) {
         console.warn("R2 cleanup skipped for some keys", error);
       }
     }
-    await env.DB.prepare(`DELETE FROM files WHERE id IN (${rows.map(() => "?").join(",")})`)
-      .bind(...rows.map((row) => row.id))
-      .run();
+
+    // Explicit deletes on both tables -- don't rely solely on the FK cascade.
+    await env.DB.batch([
+      env.DB.prepare(`DELETE FROM files WHERE group_id IN (${placeholders})`).bind(...groupIds),
+      env.DB.prepare(`DELETE FROM file_groups WHERE id IN (${placeholders})`).bind(...groupIds),
+    ]);
   } catch (error) {
     console.warn("File cleanup skipped", error);
   }

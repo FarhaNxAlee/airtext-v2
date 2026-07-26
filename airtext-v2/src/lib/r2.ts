@@ -27,7 +27,7 @@ export function isExtensionAllowed(settings: SiteSettings, filename: string): bo
 }
 
 export async function getTotalFileStorageBytes(env: Env): Promise<number> {
-  const row = await env.DB.prepare("SELECT COALESCE(SUM(size_bytes), 0) AS total FROM files WHERE expires_at > ?")
+  const row = await env.DB.prepare("SELECT COALESCE(SUM(total_size_bytes), 0) AS total FROM file_groups WHERE expires_at > ?")
     .bind(Date.now())
     .first<{ total: number }>();
   return Number(row?.total || 0);
