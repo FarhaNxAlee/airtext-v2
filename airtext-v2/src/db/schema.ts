@@ -19,6 +19,68 @@ export const siteSettings = sqliteTable(
   }),
 );
 
+export const roles = sqliteTable(
+  "roles",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    rank: integer("rank").notNull().unique(), // 0 = admin, 1 = contributor, 2 = pro (lower = higher precedence)
+    name: text("name").notNull(), // admin-editable display label
+    isSystem: integer("is_system").notNull().default(0), // seeded rows (rank 0/1/2); prevents delete, allows rename
+    defaultLimits: text("default_limits").notNull(), // JSON, see src/lib/limits.ts
+    createdAt: integer("created_at").notNull(),
+  },
+  (table) => ({
+    rankIdx: index("idx_roles_rank").on(table.rank),
+  }),
+);
+
+export const users = sqliteTable(
+  "users",
+  {
+    id: text("id").primaryKey(),
+    email: text("email").notNull().unique(),
+    passwordSalt: text("password_salt").notNull(),
+    passwordHash: text("password_hash").notNull(),
+    displayName: text("display_name").notNull(),
+    roleId: integer("role_id")
+      .notNull()
+      .references(() => roles.id),
+    customLimits: text("custom_limits"), // nullable JSON override, merged over role defaults
+    status: text("status", { enum: ["active", "disabled"] }).notNull().default("active"),
+    createdAt: integer("created_at").notNull(),
+    lastLoginAt: integer("last_login_at"),
+  },
+  (table) => ({
+    emailIdx: index("idx_users_email").on(table.email),
+    roleIdx: index("idx_users_role").on(table.roleId),
+    statusCheck: check("users_status_check", sql`${table.status} IN ('active', 'disabled')`),
+  }),
+);
+
+export const fileGroups = sqliteTable(
+  "file_groups",
+  {
+    id: text("id").primaryKey(),
+    roomId: text("room_id").notNull(),
+    userId: text("user_id").references(() => users.id),
+    title: text("title").notNull(),
+    locked: integer("locked").notNull().default(0),
+    pinSalt: text("pin_salt"),
+    pinHash: text("pin_hash"),
+    code: text("code").notNull().unique(),
+    deleteTokenHash: text("delete_token_hash").notNull(),
+    totalSizeBytes: integer("total_size_bytes").notNull(),
+    burnAfterRead: integer("burn_after_read").notNull().default(0),
+    createdAt: integer("created_at").notNull(),
+    expiresAt: integer("expires_at").notNull(),
+  },
+  (table) => ({
+    codeIdx: index("idx_file_groups_code").on(table.code),
+    expiresIdx: index("idx_file_groups_expires").on(table.expiresAt),
+    createdIdx: index("idx_file_groups_created").on(sql`${table.createdAt} desc`),
+  }),
+);
+
 export const notes = sqliteTable(
   "notes",
   {
@@ -33,6 +95,10 @@ export const notes = sqliteTable(
     deleteTokenHash: text("delete_token_hash").notNull(),
     createdAt: integer("created_at").notNull(),
     expiresAt: integer("expires_at").notNull(),
+    userId: text("user_id").references(() => users.id),
+    burnAfterRead: integer("burn_after_read").notNull().default(0),
+    bodyEncrypted: integer("body_encrypted").notNull().default(0),
+    encryptionIv: text("encryption_iv"),
   },
   (table) => ({
     codeIdx: index("idx_notes_code").on(table.code),
@@ -76,6 +142,8 @@ export const files = sqliteTable(
     downloadCount: integer("download_count").notNull().default(0),
     createdAt: integer("created_at").notNull(),
     expiresAt: integer("expires_at").notNull(),
+    userId: text("user_id").references(() => users.id),
+    burnAfterRead: integer("burn_after_read").notNull().default(0),
   },
   (table) => ({
     codeIdx: index("idx_files_code").on(table.code),
