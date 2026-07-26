@@ -485,9 +485,10 @@ const APP_SHELL = String.raw`<!doctype html>
       <section id="admin-login-card" class="mx-auto mt-12 max-w-md rounded-xl border border-[var(--line)] bg-[var(--panel)] p-6">
         <p class="hero-kicker">Administrator</p>
         <h1 class="mt-3 text-3xl font-bold text-white">Manage AirText</h1>
-        <p id="admin-login-help" class="mt-2 text-sm leading-6 text-slate-500">Sign in using the ADMIN_PASSWORD secret configured in Cloudflare.</p>
+        <p id="admin-login-help" class="mt-2 text-sm leading-6 text-slate-500">Sign in with your administrator account.</p>
         <form id="admin-login-form" class="mt-6 grid gap-3">
-          <input id="admin-password" class="form-field" type="password" autocomplete="current-password" placeholder="Administrator password">
+          <input id="admin-email" class="form-field" type="email" autocomplete="username" placeholder="Email">
+          <input id="admin-password" class="form-field" type="password" autocomplete="current-password" placeholder="Password">
           <button id="admin-login-submit" type="submit" class="primary-action px-4 py-3 font-semibold">Sign in</button>
         </form>
       </section>

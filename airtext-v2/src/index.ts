@@ -47,8 +47,8 @@ function renderSetupPage(problem: string): string {
       <p>1. Open your existing D1 database named <code>airtext</code>.</p>
       <p>2. Bind it to this Worker using the variable name <code>DB</code>.</p>
       <p>3. Add a Worker secret named <code>APP_SECRET</code> containing at least 24 random characters.</p>
-      <p>4. Add <code>ADMIN_PASSWORD</code> as a secret to enable <code>/admin</code>.</p>
-      <p>5. Deploy the Worker again. The required D1 tables are created automatically.</p>
+      <p>4. Run the database migrations so the <code>users</code>/<code>roles</code> tables and an admin account exist.</p>
+      <p>5. Deploy the Worker again.</p>
     </div>
   </main>
 </body>

@@ -1,11 +1,27 @@
 import { SELF, env } from "cloudflare:test";
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, beforeAll } from "vitest";
+import { hashPassword, randomBase64Url } from "../src/lib/crypto";
 
-async function login(password = "test-admin-password") {
+const TEST_ADMIN_EMAIL = "admin@test.local";
+const TEST_ADMIN_PASSWORD = "test-admin-password";
+
+beforeAll(async () => {
+  const adminRole = await env.DB.prepare("SELECT id FROM roles WHERE rank = 0").first<{ id: number }>();
+  const salt = randomBase64Url(16);
+  const passwordHash = await hashPassword(env.APP_SECRET, salt, TEST_ADMIN_PASSWORD);
+  await env.DB.prepare(
+    `INSERT INTO users (id, email, password_salt, password_hash, display_name, role_id, status, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, 'active', ?)`,
+  )
+    .bind("test-admin-id", TEST_ADMIN_EMAIL, salt, passwordHash, "Test Admin", adminRole!.id, Date.now())
+    .run();
+});
+
+async function login(email = TEST_ADMIN_EMAIL, password = TEST_ADMIN_PASSWORD) {
   const response = await SELF.fetch("https://example.com/api/admin/login", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ password }),
+    body: JSON.stringify({ email, password }),
   });
   const cookie = response.headers.get("set-cookie")?.split(";")[0];
   return { response, cookie };
@@ -19,14 +35,19 @@ beforeEach(async () => {
 
 describe("POST /api/admin/login", () => {
   it("rejects an incorrect password", async () => {
-    const { response } = await login("wrong-password");
+    const { response } = await login(TEST_ADMIN_EMAIL, "wrong-password");
     expect(response.status).toBe(401);
   });
 
-  it("signs in with the correct password and sets a session cookie", async () => {
+  it("rejects an unknown email", async () => {
+    const { response } = await login("nobody@test.local", TEST_ADMIN_PASSWORD);
+    expect(response.status).toBe(401);
+  });
+
+  it("signs in with the correct email/password and sets a session cookie", async () => {
     const { response, cookie } = await login();
     expect(response.status).toBe(200);
-    expect(cookie).toMatch(/^__Host-airtext_admin=/);
+    expect(cookie).toMatch(/^__Host-airtext_session=/);
   });
 });
 

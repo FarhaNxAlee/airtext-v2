@@ -3,54 +3,83 @@ import type { Env } from "../types";
 import { CONFIG } from "../lib/config";
 import { getSiteSettings, sanitizeSettings, setSiteSettingsCache } from "../lib/settings";
 import { jsonResponse, jsonError, readJsonBody } from "../lib/http";
-import { hmacHex, constantTimeEqual } from "../lib/crypto";
-import { getClientIpHash, requireAdmin, isAdminRequest, createAdminSessionToken, buildAdminCookie } from "../middleware/auth";
+import { hashPassword, constantTimeEqual } from "../lib/crypto";
+import { getClientIpHash, requireAdmin, getSession, createSessionToken, buildSessionCookie } from "../middleware/auth";
 import { enforceCooldown } from "../middleware/rateLimit";
 import { recordEvent } from "../lib/analytics";
 import { getNoteById } from "./notes";
 import { getFileById } from "./files";
 
-/** Ported from airtext-worker-modern.js:793-797, 830-836, 2328-2516. */
+/** Ported from airtext-worker-modern.js:793-797, 830-836, 2328-2516; login/session
+ *  now check the `users` table (role rank 0) instead of the ADMIN_PASSWORD secret --
+ *  see migrations/0001_accounts.sql. */
 
 export const adminRoutes = new Hono<{ Bindings: Env }>();
 
+interface AdminUserRow {
+  id: string;
+  password_salt: string;
+  password_hash: string;
+  status: string;
+  rank: number;
+}
+
 adminRoutes.get("/api/admin/session", async (c) => {
   const env = c.env;
-  const configured = Boolean(env.ADMIN_PASSWORD && String(env.ADMIN_PASSWORD).length >= 8);
-  const authenticated = configured ? await isAdminRequest(c.req.raw, env) : false;
+  const adminExists = await env.DB.prepare(
+    `SELECT 1 FROM users u JOIN roles r ON r.id = u.role_id WHERE r.rank = 0 AND u.status = 'active' LIMIT 1`,
+  ).first();
+  const configured = Boolean(adminExists);
+  const session = configured ? await getSession(c.req.raw, env) : null;
+  const authenticated = session !== null && session.rank === 0;
   return jsonResponse({ ok: true, configured, authenticated });
 });
 
 adminRoutes.post("/api/admin/login", async (c) => {
   const env = c.env;
-  if (!env.ADMIN_PASSWORD || String(env.ADMIN_PASSWORD).length < 8) {
-    return jsonError("Add an ADMIN_PASSWORD secret with at least 8 characters.", 503, "ADMIN_NOT_CONFIGURED");
-  }
-  const body = await readJsonBody<{ password?: string }>(c.req.raw, 2_000);
+  const body = await readJsonBody<{ email?: string; password?: string }>(c.req.raw, 2_000);
   if (!body.ok) return body.response;
+  const email = typeof body.data.email === "string" ? body.data.email.trim().toLowerCase() : "";
   const password = typeof body.data.password === "string" ? body.data.password : "";
+  if (!email || !password) return jsonError("Email and password are required.", 400, "MISSING_CREDENTIALS");
+
   const clientHash = await getClientIpHash(c.req.raw, env.APP_SECRET);
   const cooldown = await enforceCooldown(env, `admin:${clientHash}`, 3);
   if (!cooldown.allowed) {
     return jsonError(`Please wait ${cooldown.retryAfter} seconds and try again.`, 429, "ADMIN_RATE_LIMIT");
   }
-  const supplied = await hmacHex(env.APP_SECRET, `admin-password:${password}`);
-  const expected = await hmacHex(env.APP_SECRET, `admin-password:${env.ADMIN_PASSWORD}`);
-  if (!constantTimeEqual(supplied, expected)) {
+
+  const row = await env.DB.prepare(
+    `SELECT u.id, u.password_salt, u.password_hash, u.status, r.rank
+     FROM users u JOIN roles r ON r.id = u.role_id
+     WHERE u.email = ? AND r.rank = 0`,
+  )
+    .bind(email)
+    .first<AdminUserRow>();
+
+  if (!row || row.status !== "active") {
     await recordEvent(env, c.req.raw, "admin_login_failed");
-    return jsonError("Incorrect administrator password.", 401, "INVALID_ADMIN_PASSWORD");
+    return jsonError("Incorrect email or password.", 401, "INVALID_CREDENTIALS");
   }
-  const token = await createAdminSessionToken(env.APP_SECRET);
+
+  const suppliedHash = await hashPassword(env.APP_SECRET, row.password_salt, password);
+  if (!constantTimeEqual(suppliedHash, row.password_hash)) {
+    await recordEvent(env, c.req.raw, "admin_login_failed");
+    return jsonError("Incorrect email or password.", 401, "INVALID_CREDENTIALS");
+  }
+
+  const token = await createSessionToken(env.APP_SECRET, row.id, row.rank);
+  await env.DB.prepare("UPDATE users SET last_login_at = ? WHERE id = ?").bind(Date.now(), row.id).run();
   await recordEvent(env, c.req.raw, "admin_login");
   return jsonResponse(
     { ok: true, message: "Signed in." },
     200,
-    { "set-cookie": buildAdminCookie(token, CONFIG.ADMIN_SESSION_SECONDS) },
+    { "set-cookie": buildSessionCookie(token, CONFIG.ADMIN_SESSION_SECONDS) },
   );
 });
 
 adminRoutes.post("/api/admin/logout", () => {
-  return jsonResponse({ ok: true, message: "Signed out." }, 200, { "set-cookie": buildAdminCookie("", 0) });
+  return jsonResponse({ ok: true, message: "Signed out." }, 200, { "set-cookie": buildSessionCookie("", 0) });
 });
 
 adminRoutes.get("/api/admin/dashboard", async (c) => {

@@ -20,6 +20,21 @@ export async function hashPin(secret: string, salt: string, pin: string): Promis
   return hmacHex(secret, `pin:${salt}:${pin}`);
 }
 
+/** Same HMAC-purpose-prefix pattern as hashPin, for user account passwords. */
+export async function hashPassword(secret: string, salt: string, password: string): Promise<string> {
+  return hmacHex(secret, `password:${salt}:${password}`);
+}
+
+/**
+ * Derives a per-share AES-GCM encryption key from the note's PIN, for
+ * Phase 6's client-side encryption. Distinct HMAC purpose prefix from
+ * hashPin/hashPassword so the same secret+salt+pin never collides across
+ * uses.
+ */
+export async function deriveEncryptionKeyMaterial(secret: string, salt: string, pin: string): Promise<string> {
+  return hmacHex(secret, `enc-key:${salt}:${pin}`);
+}
+
 export function bytesToHex(bytes: Uint8Array): string {
   let output = "";
   for (const byte of bytes) output += byte.toString(16).padStart(2, "0");

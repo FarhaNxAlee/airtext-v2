@@ -159,6 +159,7 @@ import "./style.css";
         el.adminLoginCard = document.getElementById("admin-login-card");
         el.adminLoginHelp = document.getElementById("admin-login-help");
         el.adminLoginForm = document.getElementById("admin-login-form");
+        el.adminEmail = document.getElementById("admin-email");
         el.adminPassword = document.getElementById("admin-password");
         el.adminLoginSubmit = document.getElementById("admin-login-submit");
         el.adminDashboard = document.getElementById("admin-dashboard");
@@ -1588,15 +1589,17 @@ import "./style.css";
 
       async function adminLogin(event) {
         event.preventDefault();
+        var email = el.adminEmail.value.trim();
         var password = el.adminPassword.value;
-        if (!password) return fieldError(el.adminPassword, "Enter the administrator password.");
+        if (!email) return fieldError(el.adminEmail, "Enter your email.");
+        if (!password) return fieldError(el.adminPassword, "Enter your password.");
         el.adminLoginSubmit.disabled = true;
         el.adminLoginSubmit.textContent = "Signing in…";
         try {
           await apiFetch("/api/admin/login", {
             method: "POST",
             headers: { "content-type": "application/json" },
-            body: JSON.stringify({ password: password })
+            body: JSON.stringify({ email: email, password: password })
           });
           el.adminPassword.value = "";
           showAdminDashboard();
