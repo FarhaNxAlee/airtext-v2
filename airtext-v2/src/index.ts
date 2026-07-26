@@ -10,6 +10,8 @@ import { meRoutes } from "./routes/me";
 import { seoRoutes } from "./routes/seo";
 import { jsonError } from "./lib/http";
 import { getSiteSettings } from "./lib/settings";
+import { getEffectiveLimits } from "./lib/limits";
+import { getAuthenticatedUser } from "./middleware/auth";
 import { normalizeShareCode, normalizePath, escapeHtml } from "./lib/util";
 import { CONFIG } from "./lib/config";
 import { renderPage } from "./html";
@@ -124,6 +126,8 @@ app.get("*", async (c) => {
   }
 
   const settings = await getSiteSettings(c.env);
+  const viewerUser = await getAuthenticatedUser(c.req.raw, c.env);
+  const viewerLimits = await getEffectiveLimits(c.env, viewerUser);
   const html = renderPage(settings, {
     initialShareCode,
     initialFileShareCode,
@@ -133,6 +137,8 @@ app.get("*", async (c) => {
     maxPinLength: CONFIG.MAX_PIN_LENGTH,
     canonicalPath: path,
     requestOrigin: url.origin,
+    viewerLimits,
+    viewer: viewerUser ? { displayName: viewerUser.displayName, roleName: viewerUser.roleName, rank: viewerUser.rank } : null,
   });
   return new Response(html, { status: 200, headers: HTML_HEADERS });
 });

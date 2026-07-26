@@ -72,6 +72,9 @@ import "./style.css";
         el.titleCounter = document.getElementById("title-counter");
         el.textCounter = document.getElementById("text-counter");
         el.lockControl = document.getElementById("lock-control");
+        el.burnToggle = document.getElementById("burn-toggle");
+        el.customCodeFieldWrap = document.getElementById("custom-code-field-wrap");
+        el.customCodeInput = document.getElementById("custom-code-input");
         el.maintenanceBanner = document.getElementById("maintenance-banner");
         el.createExpiryCopy = document.getElementById("create-expiry-copy");
 
@@ -86,6 +89,9 @@ import "./style.css";
         el.fileLockToggle = document.getElementById("file-lock-toggle");
         el.filePinFieldWrap = document.getElementById("file-pin-field-wrap");
         el.filePin = document.getElementById("file-pin");
+        el.fileBurnToggle = document.getElementById("file-burn-toggle");
+        el.fileCustomCodeFieldWrap = document.getElementById("file-custom-code-field-wrap");
+        el.fileCustomCodeInput = document.getElementById("file-custom-code-input");
         el.stagedFilesList = document.getElementById("staged-files-list");
         el.stagedFilesTotal = document.getElementById("staged-files-total");
         el.filesDropZone = document.getElementById("files-drop-zone");
@@ -384,6 +390,8 @@ import "./style.css";
         var text = el.shareText.value.trim();
         var locked = APP.pinEnabled && el.lockToggle.checked;
         var pin = el.sharePin.value.trim();
+        var burnAfterRead = el.burnToggle.checked;
+        var customCode = APP.allowCustomCode ? el.customCodeInput.value.trim() : "";
 
         if (!title) return fieldError(el.shareTitle, "Add a title.");
         if (!text) return fieldError(el.shareText, "Add some text to share.");
@@ -397,7 +405,10 @@ import "./style.css";
           var response = await apiFetch("/api/items", {
             method: "POST",
             headers: { "content-type": "application/json" },
-            body: JSON.stringify({ title: title, text: text, locked: locked, pin: pin })
+            body: JSON.stringify({
+              title: title, text: text, locked: locked, pin: pin,
+              burnAfterRead: burnAfterRead, customCode: customCode
+            })
           });
 
           saveDeleteToken(response.item.id, response.deleteToken);
@@ -793,6 +804,10 @@ import "./style.css";
         form.append("title", el.fileTitle.value.trim());
         form.append("locked", locked ? "1" : "0");
         if (locked) form.append("pin", pin);
+        form.append("burnAfterRead", el.fileBurnToggle.checked ? "1" : "0");
+        if (APP.allowCustomCode && el.fileCustomCodeInput.value.trim()) {
+          form.append("customCode", el.fileCustomCodeInput.value.trim());
+        }
 
         setButtonLoading(el.fileUploadSubmit, true, "Uploading…");
         try {
@@ -1540,6 +1555,8 @@ import "./style.css";
           el.pinFieldWrap.classList.add("hidden");
         }
         el.feedbackSection.classList.toggle("hidden", !APP.feedbackEnabled);
+        el.customCodeFieldWrap.classList.toggle("hidden", !APP.allowCustomCode);
+        el.fileCustomCodeFieldWrap.classList.toggle("hidden", !APP.allowCustomCode);
         if (APP.maintenanceMode) {
           document.getElementById("maintenance-modal").classList.remove("hidden-force");
           lockBodyScroll();

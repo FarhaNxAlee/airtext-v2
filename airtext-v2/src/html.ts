@@ -1,5 +1,6 @@
 import { escapeHtml, safeJsonForScript } from "./lib/util";
 import type { SiteSettings } from "./lib/settings";
+import type { EffectiveLimits } from "./lib/limits";
 
 /**
  * Ported from airtext-worker-modern.js APP_HTML (:2728-6255) and
@@ -200,6 +201,25 @@ const APP_SHELL = String.raw`<!doctype html>
                   </button>
                 </div>
               </div>
+
+              <label id="burn-control" class="inline-flex cursor-pointer items-center gap-2 text-sm text-neutral-400">
+                <input id="burn-toggle" type="checkbox" class="peer sr-only">
+                <span class="relative h-5 w-9 rounded-full bg-slate-700 transition peer-checked:bg-[var(--accent)] after:absolute after:left-0.5 after:top-0.5 after:h-4 after:w-4 after:rounded-full after:bg-white after:shadow after:transition peer-checked:after:translate-x-4"></span>
+                <span>Burn after reading</span>
+              </label>
+
+              <div id="custom-code-field-wrap" class="hidden">
+                <label for="custom-code-input" class="sr-only">Custom share code</label>
+                <input
+                  id="custom-code-input"
+                  type="text"
+                  maxlength="12"
+                  autocomplete="off"
+                  autocapitalize="characters"
+                  placeholder="Custom code (optional)"
+                  class="w-44 rounded-lg border border-white/10 bg-black/25 px-3 py-2 text-sm text-white outline-none placeholder:text-slate-600 focus:border-cyan-400/50"
+                >
+              </div>
             </div>
 
             <button
@@ -319,6 +339,15 @@ const APP_SHELL = String.raw`<!doctype html>
             <div id="file-pin-field-wrap" class="hidden">
               <label for="file-pin" class="sr-only">Secret PIN</label>
               <input id="file-pin" type="password" minlength="__MIN_PIN_LENGTH__" maxlength="__MAX_PIN_LENGTH__" autocomplete="new-password" placeholder="Secret PIN" class="w-32 rounded-lg border border-white/10 bg-black/25 px-3 py-2 text-sm text-white outline-none placeholder:text-slate-600 focus:border-cyan-400/50">
+            </div>
+            <label id="file-burn-control" class="inline-flex cursor-pointer items-center gap-2 text-sm text-neutral-400">
+              <input id="file-burn-toggle" type="checkbox" class="peer sr-only">
+              <span class="relative h-5 w-9 rounded-full bg-slate-700 transition peer-checked:bg-[var(--accent)] after:absolute after:left-0.5 after:top-0.5 after:h-4 after:w-4 after:rounded-full after:bg-white after:shadow after:transition peer-checked:after:translate-x-4"></span>
+              <span>Burn after reading</span>
+            </label>
+            <div id="file-custom-code-field-wrap" class="hidden">
+              <label for="file-custom-code-input" class="sr-only">Custom share code</label>
+              <input id="file-custom-code-input" type="text" maxlength="12" autocomplete="off" autocapitalize="characters" placeholder="Custom code (optional)" class="w-40 rounded-lg border border-white/10 bg-black/25 px-3 py-2 text-sm text-white outline-none placeholder:text-slate-600 focus:border-cyan-400/50">
             </div>
           </div>
           <button id="file-upload-submit" type="submit" class="primary-action inline-flex min-w-40 items-center justify-center gap-2 px-6 py-3 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-50">
@@ -810,6 +839,12 @@ export interface RenderPageOptions {
   maxPinLength: number;
   canonicalPath: string;
   requestOrigin: string;
+  /** Effective limits for the current viewer (anonymous or logged-in) --
+   *  lets the client show/hide vanity-code and encryption options without
+   *  a round-trip, and know the right file/batch caps to validate against
+   *  client-side before submitting. */
+  viewerLimits: EffectiveLimits;
+  viewer: { displayName: string; roleName: string; rank: number } | null;
 }
 
 export function renderPage(settings: SiteSettings, options: RenderPageOptions): string {
@@ -821,6 +856,15 @@ export function renderPage(settings: SiteSettings, options: RenderPageOptions): 
     initialAdmin: options.initialAdmin,
     minPinLength: options.minPinLength,
     maxPinLength: options.maxPinLength,
+    ttlSeconds: options.viewerLimits.ttlSeconds,
+    maxTextLength: options.viewerLimits.maxTextLength,
+    maxFileSizeMB: options.viewerLimits.maxFileSizeMB,
+    maxBatchTotalMB: options.viewerLimits.maxBatchTotalMB,
+    maxFilesPerBatch: options.viewerLimits.maxFilesPerBatch,
+    fileTtlSeconds: options.viewerLimits.fileTtlSeconds,
+    allowCustomCode: options.viewerLimits.allowCustomCode,
+    allowClientEncryption: options.viewerLimits.allowClientEncryption,
+    viewer: options.viewer,
   };
 
   const replacements: Record<string, string> = {
