@@ -15,7 +15,6 @@ export default defineWorkersConfig(async () => {
             bindings: {
               TEST_MIGRATIONS: migrations,
               APP_SECRET: "test-secret-at-least-24-characters-long",
-              ADMIN_PASSWORD: "test-admin-password",
             },
           },
         },

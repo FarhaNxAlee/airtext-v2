@@ -8,7 +8,6 @@ declare module "cloudflare:test" {
     SHARE_KV: KVNamespace;
     ASSETS: Fetcher;
     APP_SECRET: string;
-    ADMIN_PASSWORD: string;
     TEST_MIGRATIONS: Parameters<typeof applyD1Migrations>[1];
   }
 }

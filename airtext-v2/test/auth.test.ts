@@ -4,7 +4,8 @@ import { hashPassword, randomBase64Url } from "../src/lib/crypto";
 
 /** Verifies the Phase 3 auth unification: admin login now lives in the
  *  `users` table (see migrations/0001_accounts.sql), not an ADMIN_PASSWORD
- *  secret -- and there is no dual auth system left active. */
+ *  secret (removed from the Env entirely -- see src/types.ts) -- and
+ *  there is no dual auth system left active. */
 
 describe("auth unification", () => {
   it("has no ADMIN_PASSWORD-based login path left", async () => {
@@ -13,7 +14,7 @@ describe("auth unification", () => {
     const response = await SELF.fetch("https://example.com/api/admin/login", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ password: env.ADMIN_PASSWORD }),
+      body: JSON.stringify({ password: "whatever-the-old-secret-used-to-be" }),
     });
     expect(response.status).toBe(400);
     const body = (await response.json()) as { code: string };

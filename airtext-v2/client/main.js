@@ -1700,7 +1700,8 @@ import "./style.css";
         try {
           var session = await apiFetch("/api/admin/session");
           if (!session.configured) {
-            el.adminLoginHelp.textContent = "Admin is disabled. Add an ADMIN_PASSWORD Worker secret with at least 8 characters, then refresh this page.";
+            el.adminLoginHelp.textContent = "No admin account exists yet. Create one directly in the users table, then refresh this page.";
+            el.adminEmail.disabled = true;
             el.adminPassword.disabled = true;
             el.adminLoginSubmit.disabled = true;
             return;

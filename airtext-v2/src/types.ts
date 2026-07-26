@@ -4,6 +4,5 @@ export interface Env {
   SHARE_KV: KVNamespace;
   ASSETS: Fetcher;
   APP_SECRET: string;
-  ADMIN_PASSWORD: string;
   ENVIRONMENT?: string;
 }
