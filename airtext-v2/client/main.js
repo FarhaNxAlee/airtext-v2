@@ -39,11 +39,13 @@ import "./style.css";
         }
 
         applyPublicSettings();
+        switchTab("share");
         updateCounters();
         loadLocalItems(false);
         loadLocalFiles(false);
         startPolling();
         window.setInterval(updateCountdowns, 1000);
+        updateCountdowns();
 
         if (APP.initialShareCode) {
           window.setTimeout(function () {
@@ -108,6 +110,11 @@ import "./style.css";
         el.qrtoolInput = document.getElementById("qrtool-input");
         el.qrtoolOutputWrap = document.getElementById("qrtool-output-wrap");
         el.qrtoolOutput = document.getElementById("qrtool-output");
+
+        el.mainTabs = document.querySelectorAll("#main-tabs [data-tab]");
+        el.tabPanels = document.querySelectorAll("[data-tab-panel]");
+        el.mainTabAvailableCount = document.getElementById("main-tab-available-count");
+        el.boardClock = document.getElementById("board-clock");
 
         el.boardLoading = document.getElementById("board-loading");
         el.boardEmpty = document.getElementById("board-empty");
@@ -206,6 +213,9 @@ import "./style.css";
       }
 
       function bindEvents() {
+        el.mainTabs.forEach(function (tab) {
+          tab.addEventListener("click", function () { switchTab(tab.getAttribute("data-tab")); });
+        });
         el.createForm.addEventListener("submit", createShare);
         el.joinForm.addEventListener("submit", function (event) {
           event.preventDefault();
@@ -420,6 +430,7 @@ import "./style.css";
 
         el.boardLoading.classList.add("hidden");
         el.itemCount.textContent = state.items.length + (state.items.length === 1 ? " item" : " items");
+        updateActiveCountBadge();
         el.boardList.textContent = "";
 
         if (visibleItems.length === 0) {
@@ -788,6 +799,7 @@ import "./style.css";
         if (!el.filesBoardList) return;
         var now = Date.now();
         state.files = state.files.filter(function (item) { return Number(item.expiresAt) > now; });
+        updateActiveCountBadge();
         el.filesBoardList.textContent = "";
 
         if (!state.files.length) {
@@ -1292,6 +1304,7 @@ import "./style.css";
           "footer-about-text": "footerAboutText",
           "footer-developer-name": "developerName",
           "privacy-text": "privacyText",
+          "network-mode-text": "privacyText",
           "admin-link-text": "adminLinkText",
           "maintenance-eyebrow": "maintenanceEyebrow",
           "maintenance-title": "maintenanceTitle",
@@ -2243,6 +2256,42 @@ import "./style.css";
         var before = state.items.length;
         state.items = state.items.filter(function (item) { return Number(item.expiresAt) > Date.now(); });
         if (state.items.length !== before) renderLocalItems();
+
+        updateBoardClock();
+      }
+
+      function updateActiveCountBadge() {
+        if (!el.mainTabAvailableCount) return;
+        var total = state.items.length + state.files.length;
+        el.mainTabAvailableCount.textContent = String(total);
+        el.mainTabAvailableCount.classList.toggle("hidden", total === 0);
+      }
+
+      function updateBoardClock() {
+        if (!el.boardClock) return;
+        var soonest = null;
+        state.items.concat(state.files).forEach(function (entry) {
+          var expiresAt = Number(entry.expiresAt);
+          if (expiresAt && (soonest === null || expiresAt < soonest)) soonest = expiresAt;
+        });
+        if (soonest === null) {
+          el.boardClock.classList.add("hidden");
+          return;
+        }
+        var seconds = Math.max(0, Math.ceil((soonest - Date.now()) / 1000));
+        el.boardClock.classList.remove("hidden");
+        el.boardClock.textContent = seconds <= 0
+          ? "Board clears now"
+          : "Board clears in " + formatBoardDuration(seconds);
+      }
+
+      function formatBoardDuration(seconds) {
+        var hours = Math.floor(seconds / 3600);
+        var minutes = Math.floor((seconds % 3600) / 60);
+        var remainder = seconds % 60;
+        if (hours >= 1) return hours + "h " + minutes + "m";
+        if (minutes >= 1) return minutes + "m " + remainder + "s";
+        return remainder + "s";
       }
 
       function formatRemaining(expiresAt) {
@@ -2432,10 +2481,36 @@ import "./style.css";
         return String(value || "").toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 12);
       }
 
+      var SECTION_TO_TAB = {
+        "create-card": "share",
+        "notes-section": "available",
+        "join-card": "open-code",
+        "files-card": "files"
+      };
+      var MAIN_TAB_NAMES = ["share", "available", "open-code", "files"];
+
+      function switchTab(name) {
+        if (MAIN_TAB_NAMES.indexOf(name) === -1) name = "share";
+        el.tabPanels.forEach(function (panel) {
+          panel.classList.toggle("tab-hidden", panel.getAttribute("data-tab-panel") !== name);
+        });
+        el.mainTabs.forEach(function (tab) {
+          var active = tab.getAttribute("data-tab") === name;
+          tab.classList.toggle("active", active);
+          tab.setAttribute("aria-current", active ? "true" : "false");
+        });
+      }
+
       function focusSection(sectionId, inputId) {
+        var tab = SECTION_TO_TAB[sectionId];
+        if (tab) switchTab(tab);
         var section = document.getElementById(sectionId);
         var input = document.getElementById(inputId);
-        if (section) section.scrollIntoView({ behavior: "smooth", block: "center" });
+        if (section) {
+          window.setTimeout(function () {
+            section.scrollIntoView({ behavior: "smooth", block: "center" });
+          }, tab ? 30 : 0);
+        }
         if (input) window.setTimeout(function () { input.focus(); }, 500);
       }
 

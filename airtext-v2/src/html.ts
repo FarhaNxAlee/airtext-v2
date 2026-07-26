@@ -102,7 +102,31 @@ const APP_SHELL = String.raw`<!doctype html>
     </div>
 
     <div id="maintenance-banner" class="hidden mb-5 rounded-lg border border-amber-400/30 bg-amber-400/10 px-4 py-3 text-sm text-amber-300">Maintenance mode is active. Existing notes can still be opened, but new notes are disabled.</div>
-    <section id="create-card" class="glass-panel app-shadow overflow-hidden rounded-2xl">
+
+    <div id="network-mode-banner" class="mb-5 flex flex-wrap items-center gap-2 rounded-lg border border-white/10 bg-white/[.04] px-4 py-3 text-xs text-neutral-500">
+      <span class="inline-flex h-2 w-2 shrink-0 rounded-full bg-[var(--accent)]" aria-hidden="true"></span>
+      <strong id="network-mode-title" class="text-neutral-300">Network mode active</strong>
+      <span id="network-mode-text">Anyone on this network can see the Available list below. Use a PIN for private content.</span>
+      <span id="board-clock" class="ml-auto hidden font-medium text-neutral-400 sm:inline"></span>
+    </div>
+
+    <nav id="main-tabs" class="mb-6 flex flex-wrap gap-2 border-b border-white/10 pb-2" aria-label="Sections">
+      <button type="button" data-tab="share" class="main-tab" aria-current="true">
+        <span id="main-tab-share-text">Share</span>
+      </button>
+      <button type="button" data-tab="available" class="main-tab">
+        <span id="main-tab-available-text">Available</span>
+        <span id="main-tab-available-count" class="main-tab-count hidden">0</span>
+      </button>
+      <button type="button" data-tab="open-code" class="main-tab">
+        <span id="main-tab-open-code-text">Open code</span>
+      </button>
+      <button type="button" data-tab="files" class="main-tab">
+        <span id="main-tab-files-text">Files</span>
+      </button>
+    </nav>
+
+    <section id="create-card" data-tab-panel="share" class="glass-panel app-shadow overflow-hidden rounded-2xl">
       <div class="flex items-center justify-between border-b border-white/[.07] px-5 py-5 sm:px-7">
         <div class="flex items-center gap-4">
           <span class="grid h-10 w-10 place-items-center rounded-full bg-[var(--accent-soft)] text-violet-300 ring-1 ring-inset ring-[var(--line)]">
@@ -193,12 +217,11 @@ const APP_SHELL = String.raw`<!doctype html>
       </form>
     </section>
 
-    <p id="create-privacy-note" class="mt-3 text-xs leading-5 text-neutral-600">
+    <p id="create-privacy-note" data-tab-panel="share" class="mt-3 text-xs leading-5 text-neutral-600">
       Only titles appear in the local list. Use a PIN for private content.
     </p>
 
-    <section class="mt-8 grid gap-6 lg:grid-cols-[1fr_300px]">
-      <article id="notes-section" class="glass-panel overflow-hidden rounded-2xl">
+      <article id="notes-section" data-tab-panel="available" class="glass-panel overflow-hidden rounded-2xl">
         <div class="flex items-center justify-between gap-4 border-b border-white/5 px-5 py-4">
           <div>
             <h2 id="available-title" class="text-base font-semibold text-white">Available on this network</h2>
@@ -242,7 +265,7 @@ const APP_SHELL = String.raw`<!doctype html>
         </div>
       </article>
 
-      <aside id="join-card" class="glass-panel h-fit rounded-2xl p-5">
+      <aside id="join-card" data-tab-panel="open-code" class="glass-panel h-fit rounded-2xl p-5 max-w-md">
         <h2 id="open-code-title" class="text-base font-semibold text-white">Open a code</h2>
         <form id="join-form" class="mt-4 space-y-3" novalidate>
           <label for="join-code" class="sr-only">Share code</label>
@@ -264,9 +287,8 @@ const APP_SHELL = String.raw`<!doctype html>
           Scan QR instead
         </button>
       </aside>
-    </section>
 
-    <section id="files-card" class="glass-panel app-shadow mt-8 overflow-hidden rounded-2xl">
+    <section id="files-card" data-tab-panel="files" class="glass-panel app-shadow overflow-hidden rounded-2xl">
       <div class="flex items-center justify-between border-b border-white/[.07] px-5 py-5 sm:px-7">
         <div>
           <h2 id="files-section-title" class="text-2xl font-semibold tracking-tight text-white sm:text-3xl">Share a file</h2>

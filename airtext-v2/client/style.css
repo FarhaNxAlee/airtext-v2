@@ -183,6 +183,11 @@
     .admin-tab { padding: 10px 16px; border: 1px solid transparent; border-bottom: none; border-radius: 8px 8px 0 0; color: var(--muted); font-size: 13px; font-weight: 700; background: transparent; margin-bottom: -1px; }
     .admin-tab:hover { color: var(--text); }
     .admin-tab.active { color: var(--accent-text); background: var(--accent); border-color: var(--accent); }
+    .main-tab { display: inline-flex; align-items: center; gap: 6px; padding: 9px 16px; border-radius: 8px; color: var(--muted); font-size: 13px; font-weight: 700; background: transparent; transition: color .15s ease, background .15s ease; }
+    .main-tab:hover { color: var(--text); background: var(--accent-soft); }
+    .main-tab.active { color: var(--accent-text); background: var(--accent); }
+    .main-tab-count { display: inline-grid; min-width: 18px; height: 18px; place-items: center; border-radius: 999px; background: color-mix(in srgb, currentColor 18%, transparent); padding: 0 5px; font-size: 10px; font-weight: 800; }
+    .tab-hidden { display: none !important; }
     .admin-tab-panel.hidden { display: none; }
     .storage-bar { height: 10px; border-radius: 999px; background: var(--panel-soft); border: 1px solid var(--line); overflow: hidden; }
     .storage-bar-fill { height: 100%; background: var(--accent); width: 0%; transition: width .3s ease; }
