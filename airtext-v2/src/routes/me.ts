@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import type { Env } from "../types";
 import { CONFIG } from "../lib/config";
 import { jsonResponse, jsonError, readJsonBody } from "../lib/http";
-import { hashPassword, constantTimeEqual } from "../lib/crypto";
+import { hashPassword, constantTimeEqual, randomBase64Url } from "../lib/crypto";
 import { getClientIpHash, getAuthenticatedUser, createSessionToken, buildSessionCookie } from "../middleware/auth";
 import { enforceCooldown } from "../middleware/rateLimit";
 import { recordEvent } from "../lib/analytics";
@@ -126,6 +126,41 @@ meRoutes.get("/api/me/shares", async (c) => {
       expiresAt: row.expires_at,
     })),
   });
+});
+
+meRoutes.patch("/api/me/password", async (c) => {
+  const env = c.env;
+  const user = await getAuthenticatedUser(c.req.raw, env);
+  if (!user) return jsonError("Sign in to change your password.", 401, "AUTH_REQUIRED");
+
+  const body = await readJsonBody<{ currentPassword?: string; newPassword?: string }>(c.req.raw, 2_000);
+  if (!body.ok) return body.response;
+  const currentPassword = typeof body.data.currentPassword === "string" ? body.data.currentPassword : "";
+  const newPassword = typeof body.data.newPassword === "string" ? body.data.newPassword : "";
+  if (!currentPassword || !newPassword) {
+    return jsonError("Current and new password are required.", 400, "MISSING_CREDENTIALS");
+  }
+  if (newPassword.length < 8) {
+    return jsonError("New password must be at least 8 characters.", 400, "WEAK_PASSWORD");
+  }
+
+  const row = await env.DB.prepare("SELECT password_salt, password_hash FROM users WHERE id = ?")
+    .bind(user.id)
+    .first<{ password_salt: string; password_hash: string }>();
+  if (!row) return jsonError("Account not found.", 404, "NOT_FOUND");
+
+  const suppliedHash = await hashPassword(env.APP_SECRET, row.password_salt, currentPassword);
+  if (!constantTimeEqual(suppliedHash, row.password_hash)) {
+    return jsonError("Current password is incorrect.", 401, "INVALID_CREDENTIALS");
+  }
+
+  const newSalt = randomBase64Url(16);
+  const newHash = await hashPassword(env.APP_SECRET, newSalt, newPassword);
+  await env.DB.prepare("UPDATE users SET password_salt = ?, password_hash = ? WHERE id = ?")
+    .bind(newSalt, newHash, user.id)
+    .run();
+  await recordEvent(env, c.req.raw, "user_password_changed");
+  return jsonResponse({ ok: true, message: "Password updated." });
 });
 
 meRoutes.delete("/api/me/shares/notes/:noteId", async (c) => {

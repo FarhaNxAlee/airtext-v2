@@ -105,6 +105,15 @@
     .text-violet-300, .text-violet-400, .text-cyan-300 { color: var(--accent) !important; }
     .border-white\/5, .border-white\/10 { border-color: var(--line) !important; }
     input, textarea, select { color: var(--text) !important; }
+    /* :root sets color-scheme on the page, but that alone doesn't reliably
+       theme every browser's native <option> popup list (several still
+       render it with the OS's light default regardless). Setting
+       color-scheme directly on the control, plus explicit option colors
+       (supported in current Chromium/Firefox), makes the dropdown list
+       itself readable in dark mode instead of a bright, illegible popup. */
+    select { color-scheme: dark; }
+    html[data-theme="light"] select { color-scheme: light; }
+    select option { background: var(--panel); color: var(--text); }
     input::placeholder, textarea::placeholder { color: var(--muted) !important; opacity: .65; }
     .header-secondary-link { border-left: 1px solid var(--line); padding: 8px 10px; color: var(--muted); transition: color .16s ease; }
     .header-secondary-link:hover { color: var(--accent); }
@@ -113,7 +122,11 @@
     .announcement-label { display: inline-grid; place-items: center; min-height: 28px; padding: 0 10px; border-radius: 999px; background: var(--accent); color: var(--accent-text); font-size: 10px; font-weight: 900; letter-spacing: .12em; }
     .announcement-arrow { color: var(--accent); font-size: 23px; font-weight: 800; }
     .hero-shell { padding: 38px 0 34px; }
-    .hero-grid { display: grid; grid-template-columns: minmax(0, 1.12fr) minmax(350px, .88fr); align-items: center; gap: clamp(36px, 6vw, 82px); }
+    /* align-items was "center": with the quick-share card now holding a
+       full form (much taller than the hero text), centering left the
+       shorter text column floating in a lot of empty vertical space next
+       to the tall card. Top-aligning keeps both columns starting together. */
+    .hero-grid { display: grid; grid-template-columns: minmax(0, 1.12fr) minmax(350px, .88fr); align-items: start; gap: clamp(36px, 6vw, 82px); }
     .hero-content { min-width: 0; }
     .hero-kicker { color: var(--accent); font-weight: 700; letter-spacing: .14em; text-transform: uppercase; font-size: 12px; }
     .hero-title { margin-top: 14px; max-width: 760px; font-size: clamp(48px, 6.3vw, 88px); line-height: .94; font-weight: 800; letter-spacing: -.065em; color: var(--text); }
@@ -123,6 +136,47 @@
     .hero-secondary-action { padding: 11px 16px; border: 1px solid var(--line); border-radius: 6px; color: var(--text); background: var(--panel); font-weight: 650; }
     .hero-secondary-action:hover { border-color: var(--accent); color: var(--accent); }
     .hero-flow-card { position: relative; isolation: isolate; overflow: hidden; min-height: 390px; padding: 30px; border: 1px solid var(--line); border-radius: 18px; background: linear-gradient(145deg, var(--panel), var(--panel-soft)); box-shadow: 0 32px 90px rgba(0,0,0,.28); }
+    /* The hero's "try it now" card reuses the full-size create-note/create-
+       file/receive fragments verbatim (same ids main.js binds to) so it
+       shrinks their oversized bits here instead of duplicating markup --
+       a full-page textarea plus a whole second receive-form otherwise made
+       this card absurdly tall next to the rest of the hero. */
+    /* min-height alone didn't work: the shared textarea has rows="12",
+       which sets its own intrinsic/preferred height directly -- min-height
+       only raises a floor, it can't shrink something already taller than
+       that floor from the rows attribute. Only an explicit height (which
+       the textarea's own resize:vertical still lets the user grow) actually
+       overrides that intrinsic sizing. */
+    #quick-share-card textarea#share-text { height: 110px !important; min-height: 0 !important; }
+    #quick-share-card #create-privacy-note { display: none; }
+    #quick-share-card .flow-path,
+    #quick-share-card .hero-stats { display: none; }
+    /* Header (icon + title + subtitle + "Temporary" badge) and the always-
+       visible expiry select are useful on the full /text and /files pages
+       but are pure overhead in a hero teaser -- drop them here only. */
+    #quick-share-card #create-expiry-copy,
+    #quick-share-card #create-temporary-badge,
+    #quick-share-card #files-section-subtitle,
+    #quick-share-card #files-temporary-badge,
+    #quick-share-card select[id$="-ttl-select"] { display: none; }
+    #quick-share-card #create-card > div:first-child,
+    #quick-share-card #files-card > div:first-child { padding: 14px 20px; }
+    #quick-share-card #create-card > div:first-child .h-10,
+    #quick-share-card #files-card > div:first-child .h-10 { height: 32px; width: 32px; }
+    #quick-share-card #create-card > div:first-child svg,
+    #quick-share-card #files-card > div:first-child svg { height: 18px; width: 18px; }
+    #quick-share-card #create-card h1,
+    #quick-share-card #files-section-title { font-size: 18px; }
+    /* The Save/Upload button row uses a viewport-width breakpoint
+       (sm:flex-row) to decide when to sit beside the toggle row -- correct
+       on the full-width /text and /files pages, but the quick-share card is
+       always much narrower than the viewport, so at any sm+ viewport the
+       button tried to squeeze in beside a wrapped toggle row in a card far
+       too narrow for that, cutting it off. Force the safe stacked layout
+       regardless of viewport width in this narrower context. */
+    #quick-share-card .sm\:flex-row { flex-direction: column !important; }
+    #quick-share-card #create-submit,
+    #quick-share-card #file-upload-submit { width: 100%; margin-top: 4px; }
     .hero-flow-card::after { content: ""; position: absolute; inset: auto -45px -50px auto; width: 180px; height: 180px; border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent); border-radius: 50%; opacity: .6; }
     .hero-flow-glow { position: absolute; z-index: -1; top: -90px; right: -80px; width: 240px; height: 240px; border-radius: 50%; background: var(--accent); opacity: .13; filter: blur(20px); }
     .hero-flow-title { max-width: 330px; margin-top: 13px; color: var(--text); font-size: clamp(29px, 3vw, 43px); font-weight: 800; letter-spacing: -.05em; line-height: 1.02; }
@@ -166,7 +220,7 @@
     .note-row:hover { background: var(--accent-soft); padding-inline: 12px; }
     .note-main { min-width: 0; }
     .note-meta { display: flex; flex-wrap: wrap; gap: 6px; }
-    .note-badge { display: inline-flex; align-items: center; border: 1px solid var(--line); border-radius: 999px; padding: 3px 8px; color: var(--muted); font-size: 9px; font-weight: 750; letter-spacing: .08em; text-transform: uppercase; }
+    .note-badge { display: inline-flex; align-items: center; border: 1px solid var(--line); border-radius: 999px; padding: 3px 9px; color: var(--muted); font-size: 11px; font-weight: 750; letter-spacing: .08em; text-transform: uppercase; }
     .note-title { margin-top: 8px; overflow: hidden; color: var(--text); font-size: 15px; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
     .note-expiry { display: block; margin-top: 5px; color: var(--muted); font-size: 11px; }
     .note-actions { display: flex; align-items: center; gap: 7px; }
@@ -227,7 +281,20 @@
       .desktop-nav-item { display: none !important; }
       .hero-grid { grid-template-columns: 1fr; }
       .hero-flow-card { min-height: auto; }
-      .footer-grid { grid-template-columns: repeat(2, minmax(0,1fr)); }
+      /* .footer-grid:has(#footer-social-column.hidden-force) (used to drop
+         to a 3-column layout when there are no social links) carries an ID
+         selector inside :has(), giving it ID-level specificity that beat
+         a plain .footer-grid override at ANY width -- the footer was stuck
+         at its fixed 240px+130px+130px desktop columns on every phone,
+         causing real horizontal overflow. Repeating the :has() variant here
+         matches its specificity so the mobile collapse actually wins. */
+      .footer-grid,
+      .footer-grid:has(#footer-social-column.hidden-force) { grid-template-columns: repeat(2, minmax(0,1fr)); }
+      /* The fixed mobile bottom-tab bar (nav[aria-label="Mobile navigation"],
+         shown via the same max-[900px] breakpoint, ~64px tall) has nothing
+         reserving space below the footer, so its last ~64px (copyright,
+         developer credit) sits directly behind the bar and is unreadable. */
+      .site-footer { padding-bottom: 84px; }
     }
     @media (max-width: 640px) {
       .hero-shell { padding-top: 24px; }
@@ -241,7 +308,288 @@
       .note-actions { justify-content: flex-start; }
       .announcement-bar { grid-template-columns: auto 1fr; }
       .announcement-arrow { display: none; }
-      .hero-stats, .footer-grid { grid-template-columns: 1fr; }
+      .hero-stats, .footer-grid, .footer-grid:has(#footer-social-column.hidden-force) { grid-template-columns: 1fr; }
       .hero-flow-card { padding: 24px; }
       .footer-bottom { flex-direction: column; }
+    }
+
+    /* ==========================================================================
+       V3 Phase 2 (CSS-only slice) — Tier visual system + badge redesign
+       Additive only. See V3-PLAN.md sections 3.1 / 3.3 / 3.4.
+       Lime (--accent) stays the brand color; tiers get their own tokens below
+       so gold/violet never collide with it.
+       ========================================================================== */
+
+    /* --- Tier tokens: dark (base :root) --- */
+    :root {
+      --tier-admin-ring-start: #ffe29a;
+      --tier-admin-ring-end: #d89b1f;
+      --tier-admin-badge-text: #3a2705;
+      --tier-admin-glow: rgba(216, 155, 31, .38);
+
+      --tier-pro-ring-start: #c4b5fd;
+      --tier-pro-ring-end: #7c3aed;
+      --tier-pro-badge-text: #f5f3ff;
+
+      --tier-member-ring: var(--accent-strong);
+      --tier-member-badge-text: var(--accent-text);
+    }
+    /* --- Tier tokens: light theme overrides (contrast-adjusted) --- */
+    html[data-theme="light"] {
+      --tier-admin-ring-start: #f6c85a;
+      --tier-admin-ring-end: #b8790a;
+      --tier-admin-badge-text: #3a2705;
+      --tier-admin-glow: rgba(184, 121, 10, .28);
+
+      --tier-pro-ring-start: #a78bfa;
+      --tier-pro-ring-end: #6d28d9;
+      --tier-pro-badge-text: #ffffff;
+
+      --tier-member-ring: var(--accent-strong);
+      --tier-member-badge-text: var(--accent-text);
+    }
+
+    /* --- Tier avatar + rings ---
+       .tier-avatar is the base circle (initials or plain fill). Layer one of
+       the .tier-ring-* modifiers on the same element to get a gradient/solid
+       halo around it -- the ring lives on an absolutely-positioned ::before
+       sized slightly larger than the avatar and pushed behind it (z-index -1
+       inside the avatar's own stacking context), so the opaque avatar face
+       covers the middle and only a ring-width band of the gradient shows. */
+    .tier-avatar {
+      position: relative;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 38px;
+      height: 38px;
+      flex-shrink: 0;
+      border-radius: 50%;
+      background: var(--panel-soft);
+      color: var(--text);
+      font-size: 14px;
+      font-weight: 800;
+      letter-spacing: -.01em;
+      isolation: isolate;
+    }
+    .tier-ring-admin::before,
+    .tier-ring-pro::before,
+    .tier-ring-member::before {
+      content: "";
+      position: absolute;
+      inset: -3px;
+      z-index: -1;
+      border-radius: 50%;
+    }
+    .tier-ring-admin::before {
+      background: linear-gradient(135deg, var(--tier-admin-ring-start), var(--tier-admin-ring-end));
+    }
+    .tier-ring-pro::before {
+      background: linear-gradient(135deg, var(--tier-pro-ring-start), var(--tier-pro-ring-end));
+    }
+    .tier-ring-member::before {
+      background: var(--tier-member-ring);
+    }
+
+    /* --- Tier badges: gradient/solid chips, icon+label friendly ---
+       Larger and bolder than the base .note-badge so a tier reads at a
+       glance; independent of the .note-badge modifier set below since tier
+       chips carry their own background (gradient for admin/pro). */
+    .tier-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      min-height: 22px;
+      padding: 3px 10px;
+      border-radius: 999px;
+      color: var(--text);
+      font-size: 11px;
+      font-weight: 850;
+      letter-spacing: .05em;
+      line-height: 1;
+      text-transform: uppercase;
+      white-space: nowrap;
+      border: 1px solid transparent;
+    }
+    .tier-badge-admin {
+      background: linear-gradient(135deg, var(--tier-admin-ring-start), var(--tier-admin-ring-end));
+      color: var(--tier-admin-badge-text);
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, .35);
+    }
+    .tier-badge-pro {
+      background: linear-gradient(135deg, var(--tier-pro-ring-start), var(--tier-pro-ring-end));
+      color: var(--tier-pro-badge-text);
+    }
+    .tier-badge-member {
+      background: var(--tier-member-ring);
+      color: var(--tier-member-badge-text);
+    }
+
+    /* --- Admin card treatment: gradient outline + soft glow + gated shimmer ---
+       Only Admin gets the loud card (per V3-PLAN 3.3: "every row having a
+       gradient border kills scanability"). Pro/Member get ring + badge only,
+       no card class. Double background (padding-box fill + border-box
+       gradient) draws the outline without needing a transparent border hack
+       elsewhere; the shimmer only ever animates the border-box layer and is
+       fully gated behind prefers-reduced-motion so it's static otherwise. */
+    .tier-card-admin {
+      position: relative;
+      border: 1px solid transparent;
+      border-radius: 12px;
+      background:
+        linear-gradient(var(--panel), var(--panel)) padding-box,
+        linear-gradient(120deg, var(--tier-admin-ring-start), var(--tier-admin-ring-end), var(--tier-admin-ring-start)) border-box;
+      background-size: 100% 100%, 220% 220%;
+      background-position: 0 0, 0% 50%;
+      /* Toned down from a triple-stacked shadow (3 layers, up to 34px blur)
+         that read as an overpowering glow around every admin-owned row --
+         one soft shadow is enough to read as "special" without dominating
+         the list. */
+      box-shadow: 0 4px 16px var(--tier-admin-glow);
+    }
+    .note-row.tier-card-admin,
+    .admin-list-row.tier-card-admin { padding: 17px 14px; }
+    @media (prefers-reduced-motion: no-preference) {
+      .tier-card-admin { animation: tierAdminShimmer 6s ease-in-out infinite; }
+    }
+    @keyframes tierAdminShimmer {
+      0%, 100% { background-position: 0 0, 0% 50%; }
+      50% { background-position: 0 0, 100% 50%; }
+    }
+
+    /* --- Badge system redesign: color-coded modifiers on .note-badge ---
+       Base .note-badge (shape/size) is unchanged in structure -- only its
+       font-size was bumped 9px -> 11px above. Existing markup that already
+       uses "note-badge" alone keeps rendering as the neutral grey pill; add
+       one of these as a second class to color-code it without a markup
+       rewrite (e.g. class="note-badge badge-locked"). */
+    .note-badge.badge-locked {
+      border-color: color-mix(in srgb, #f2a93b 55%, var(--line));
+      background: color-mix(in srgb, #f2a93b 16%, transparent);
+      color: color-mix(in srgb, #f2a93b 72%, var(--text));
+    }
+    .note-badge.badge-burn {
+      border-color: color-mix(in srgb, var(--danger) 55%, var(--line));
+      background: color-mix(in srgb, var(--danger) 14%, transparent);
+      color: var(--danger);
+    }
+    .note-badge.badge-mine {
+      border-color: color-mix(in srgb, var(--accent) 55%, var(--line));
+      background: var(--accent-soft);
+      color: color-mix(in srgb, var(--accent-strong) 80%, var(--text));
+    }
+    .note-badge.badge-received {
+      border-color: var(--line);
+      background: color-mix(in srgb, var(--text) 8%, transparent);
+      color: var(--text);
+    }
+
+    /* ==========================================================================
+       V3 Phase 8 (client-only slice) — Admin sidebar IA (V3-PLAN.md section 7.1)
+       Additive only, scoped under #admin-app / .admin-shell so nothing here can
+       leak into #public-app or #account-app.
+       ========================================================================== */
+    .admin-shell { display: flex; align-items: flex-start; min-height: 100vh; }
+    /* #admin-dashboard carries both "hidden" (Tailwind utility, display:none)
+       and "admin-shell" (display:flex) at once before/after auth -- same
+       specificity (0,0,1,0) means source order decides, and admin-shell
+       being appended later in this file was silently winning, showing the
+       full dashboard to logged-out visitors. ID+class beats a bare class
+       regardless of order, so this always wins while "hidden" is present. */
+    #admin-dashboard.hidden { display: none; }
+    .admin-sidebar {
+      position: sticky; top: 0; display: flex; flex-direction: column;
+      width: 232px; flex-shrink: 0; height: 100vh; padding: 20px 14px;
+      border-right: 1px solid var(--line); background: var(--panel);
+    }
+    .admin-sidebar-brand { display: flex; align-items: center; gap: 10px; padding: 6px 8px 18px; }
+    .admin-sidebar-brand strong { display: block; color: var(--text); font-size: 14px; font-weight: 800; }
+    .admin-sidebar-brand small { display: block; color: var(--muted); font-size: 10px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; }
+    .admin-sidebar-nav { display: flex; flex-direction: column; gap: 3px; flex: 1; }
+    .admin-nav-link {
+      display: flex; align-items: center; justify-content: space-between; gap: 8px;
+      padding: 10px 12px; border-radius: 8px; color: var(--muted);
+      font-size: 13px; font-weight: 700; text-align: left; background: transparent;
+    }
+    .admin-nav-link:hover { color: var(--text); background: var(--accent-soft); }
+    .admin-nav-link.active { color: var(--accent-text); background: var(--accent); }
+    .admin-nav-badge {
+      display: inline-grid; min-width: 18px; height: 18px; place-items: center;
+      border-radius: 999px; background: var(--danger); color: #fff; padding: 0 5px; font-size: 10px; font-weight: 800;
+    }
+    .admin-nav-link.active .admin-nav-badge { background: color-mix(in srgb, var(--accent-text) 25%, transparent); color: var(--accent-text); }
+    .admin-sidebar-footer { display: flex; gap: 8px; padding-top: 14px; border-top: 1px solid var(--line); }
+    .admin-health-dot {
+      display: inline-flex; align-items: center; gap: 5px; padding: 4px 9px; border-radius: 999px;
+      border: 1px solid var(--line); font-size: 10px; font-weight: 800; color: var(--muted);
+    }
+    .admin-health-dot::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--muted); }
+    .admin-health-dot.ok { color: var(--accent-strong); border-color: color-mix(in srgb, var(--accent) 40%, var(--line)); }
+    .admin-health-dot.ok::before { background: var(--accent); }
+    .admin-health-dot.down { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 40%, var(--line)); }
+    .admin-health-dot.down::before { background: var(--danger); }
+
+    .admin-main { flex: 1; min-width: 0; }
+    .admin-topbar {
+      position: sticky; top: 0; z-index: 30; display: flex; align-items: center; justify-content: space-between;
+      gap: 16px; padding: 14px 24px; border-bottom: 1px solid var(--line); background: color-mix(in srgb, var(--page) 94%, transparent);
+      backdrop-filter: blur(6px);
+    }
+    .admin-search-input { max-width: 320px; }
+    .admin-topbar-actions { display: flex; align-items: center; gap: 10px; }
+    /* .admin-wrap (32px top padding, from the pre-sidebar admin layout) and
+       .admin-content-wrap both land on the same element in the new sidebar
+       shell, doubling up to ~58px of dead space above "Overview" -- the
+       topbar already separates content from the page edge, so drop
+       admin-wrap's share of it here rather than stacking both. */
+    .admin-wrap.admin-content-wrap { padding-top: 22px; }
+
+    .admin-toolbar { flex-wrap: wrap; gap: 10px; }
+    .admin-toolbar-search { max-width: 260px; }
+
+    /* Trend KPI cards */
+    .stat-trend { margin-top: 6px; font-size: 12px; font-weight: 700; }
+    .stat-trend.up { color: var(--accent-strong); }
+    .stat-trend.down { color: var(--danger); }
+    .stat-trend.flat { color: var(--muted); }
+
+    /* Needs-attention panel rows */
+    .attention-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 0; border-bottom: 1px solid var(--line); }
+    .attention-row:last-child { border-bottom: 0; }
+    .attention-row button { color: var(--accent); font-weight: 700; }
+    .attention-value.warn { color: var(--danger); font-weight: 800; }
+
+    /* Simple trend bars (current vs prior) */
+    .trend-bar-row { display: grid; gap: 6px; }
+    .trend-bar-track { position: relative; height: 8px; border-radius: 999px; background: var(--panel-soft); border: 1px solid var(--line); overflow: hidden; }
+    .trend-bar-fill { position: absolute; inset: 0 auto 0 0; height: 100%; background: var(--accent); border-radius: 999px; }
+    .trend-bar-fill.prior { background: var(--muted); opacity: .45; }
+
+    /* Generic admin list rows used by Drops / Users / Inbox (replaces literal
+       <table> markup with the same div-row convention as .note-row/.admin-list-row
+       elsewhere in this codebase). */
+    .admin-row { display: grid; grid-template-columns: auto minmax(0,1fr) auto; align-items: center; gap: 14px; padding: 13px 4px; border-bottom: 1px solid var(--line); }
+    .admin-row:last-child { border-bottom: 0; }
+    .admin-row-main { min-width: 0; display: grid; gap: 4px; }
+    .admin-row-title { color: var(--text); font-size: 14px; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .admin-row-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; }
+    .admin-row-actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+    .admin-pagination { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--line); font-size: 12px; color: var(--muted); }
+    .admin-pagination button { border: 1px solid var(--line); border-radius: 6px; padding: 6px 12px; font-size: 12px; font-weight: 700; color: var(--text); background: var(--panel-soft); }
+    .admin-pagination button:disabled { opacity: .4; }
+
+    /* Per-user limits form (kills the raw-JSON textarea -- V3-PLAN 7.4) */
+    .limits-form { margin-top: 10px; padding: 14px; border: 1px solid var(--line); border-radius: 9px; background: var(--panel-soft); grid-column: 1 / -1; }
+    .limits-form-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 12px; }
+    .limits-field { display: grid; gap: 6px; font-size: 12px; color: var(--muted); }
+    .limits-field-inherit { display: flex; align-items: center; gap: 6px; font-size: 11px; }
+
+    @media (max-width: 900px) {
+      .admin-shell { flex-direction: column; }
+      .admin-sidebar { position: static; width: 100%; height: auto; flex-direction: row; align-items: center; gap: 14px; overflow-x: auto; }
+      .admin-sidebar-nav { flex-direction: row; flex: none; }
+      .admin-sidebar-footer { border-top: 0; padding-top: 0; }
+      .admin-row { grid-template-columns: 1fr; }
+      .admin-row-actions { justify-content: flex-start; }
+      .admin-topbar { flex-wrap: wrap; }
     }

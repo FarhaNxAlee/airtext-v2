@@ -22,7 +22,7 @@ feedbackRoutes.post("/api/feedback", async (c) => {
     6_000,
   );
   if (!body.ok) return body.response;
-  const allowedCategories = ["bug", "suggestion", "design", "other"];
+  const allowedCategories = ["bug", "suggestion", "design", "other", "account_request"];
   const category = allowedCategories.includes(body.data.category as string) ? (body.data.category as string) : "other";
   const message = typeof body.data.message === "string" ? body.data.message.trim() : "";
   const email = typeof body.data.email === "string" ? body.data.email.trim().slice(0, 200) : "";

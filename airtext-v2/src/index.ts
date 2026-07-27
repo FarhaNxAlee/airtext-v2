@@ -18,6 +18,24 @@ import { renderPage } from "./html";
 
 /** Ported from airtext-worker-modern.js:246-437 (route dispatcher) + :987-995 (setup check). */
 
+/** V3 Phase 2b+3 (V3-PLAN.md sections 1, 3): real indexable routes, each
+ *  with its own <title>/description/canonical via src/html.ts's ROUTE_SEO
+ *  map. `/`, `/admin`, `/account`, `/s/:code`, `/f/:code` are handled
+ *  separately below exactly as before -- this set only adds new paths. */
+const PUBLIC_CONTENT_ROUTES = new Set([
+  "/text",
+  "/files",
+  "/nearby",
+  "/receive",
+  "/qr",
+  "/guide",
+  "/faq",
+  "/about",
+  "/privacy",
+  "/terms",
+  "/login",
+]);
+
 function getSetupProblem(env: Env): string {
   if (!env.DB) {
     return "Missing D1 database binding named DB. Bind your airtext D1 database using the variable name DB.";
@@ -83,6 +101,9 @@ const HTML_HEADERS = {
     "connect-src 'self'",
     "media-src 'self' blob:",
     "font-src 'self' data:",
+    // manifest-src falls back to default-src ('none') otherwise, silently
+    // blocking the PWA manifest link added to <head> in src/html.ts.
+    "manifest-src 'self'",
     "frame-ancestors 'none'",
     "base-uri 'self'",
     "form-action 'self'",
@@ -120,8 +141,16 @@ app.get("*", async (c) => {
   const initialFileShareCode = fileCodeMatch ? normalizeShareCode(fileCodeMatch[1]) : "";
   const initialShareVia: "link" | "qr" = url.searchParams.get("via") === "qr" ? "qr" : "link";
   const initialAdmin = path === "/admin";
+  const initialAccount = path === "/account";
 
-  if (path !== "/" && !initialShareCode && !initialFileShareCode && !initialAdmin) {
+  if (
+    path !== "/" &&
+    !initialShareCode &&
+    !initialFileShareCode &&
+    !initialAdmin &&
+    !initialAccount &&
+    !PUBLIC_CONTENT_ROUTES.has(path)
+  ) {
     return new Response(renderRuntimeErrorPage("Page not found."), { status: 404, headers: HTML_HEADERS });
   }
 
@@ -133,6 +162,7 @@ app.get("*", async (c) => {
     initialFileShareCode,
     initialShareVia,
     initialAdmin,
+    initialAccount,
     minPinLength: CONFIG.MIN_PIN_LENGTH,
     maxPinLength: CONFIG.MAX_PIN_LENGTH,
     canonicalPath: path,

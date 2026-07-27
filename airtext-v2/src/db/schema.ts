@@ -214,3 +214,29 @@ export const rateLimits = sqliteTable(
     expiresIdx: index("idx_rate_limits_expires").on(table.expiresAt),
   }),
 );
+
+/**
+ * Generic append-only audit trail for admin-panel actions (Phase 8
+ * groundwork, see V3-PLAN.md section 8). before_json/after_json hold
+ * JSON.stringify'd snapshots, actor fields are nullable since not every
+ * action necessarily has a resolved user (e.g. failed auth attempts).
+ */
+export const auditLog = sqliteTable(
+  "audit_log",
+  {
+    id: text("id").primaryKey(),
+    actorUserId: text("actor_user_id"),
+    actorEmail: text("actor_email"),
+    action: text("action").notNull(),
+    targetType: text("target_type"),
+    targetId: text("target_id"),
+    beforeJson: text("before_json"),
+    afterJson: text("after_json"),
+    ipHash: text("ip_hash"),
+    createdAt: integer("created_at").notNull(),
+  },
+  (table) => ({
+    createdAtIdx: index("idx_audit_log_created_at").on(table.createdAt),
+    actorIdx: index("idx_audit_log_actor").on(table.actorUserId),
+  }),
+);

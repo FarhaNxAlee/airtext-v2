@@ -1,0 +1,18 @@
+{
+  "name": "AirText",
+  "short_name": "AirText",
+  "description": "Share text and files instantly with a code, link or QR. No account, auto-deletes.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#141410",
+  "theme_color": "#141410",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

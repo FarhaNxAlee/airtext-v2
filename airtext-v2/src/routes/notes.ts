@@ -219,11 +219,35 @@ notesRoutes.get("/api/local/items", async (c) => {
   });
 });
 
+/** Landing-page "live Wi-Fi" strip (V3-PLAN.md sections 4, 9): a minimal
+ *  read-only counter of everything currently visible on the caller's
+ *  network -- notes plus file groups -- without shipping the full board
+ *  payload the way /api/local/items and /api/local/files do. Reads
+ *  file_groups directly (no write, no schema change) rather than adding a
+ *  second round-trip to files.ts. */
+notesRoutes.get("/api/local/count", async (c) => {
+  const env = c.env;
+  const roomId = await getRoomId(c.req.raw, env.APP_SECRET);
+  const now = Date.now();
+  const noteCountRow = await env.DB.prepare(
+    `SELECT COUNT(*) AS count FROM network_notes nn JOIN notes n ON n.id = nn.note_id WHERE nn.room_id = ? AND n.expires_at > ?`,
+  )
+    .bind(roomId, now)
+    .first<{ count: number }>();
+  const fileCountRow = await env.DB.prepare(
+    `SELECT COUNT(*) AS count FROM network_files nf JOIN file_groups g ON g.id = nf.group_id WHERE nf.room_id = ? AND g.expires_at > ?`,
+  )
+    .bind(roomId, now)
+    .first<{ count: number }>();
+  const count = Number(noteCountRow?.count || 0) + Number(fileCountRow?.count || 0);
+  return jsonResponse({ ok: true, count });
+});
+
 notesRoutes.post("/api/items", async (c) => {
   const env = c.env;
   const url = new URL(c.req.url);
   const settings = await getSiteSettings(env);
-  if (settings.maintenanceMode || !settings.notesEnabled || !settings.createSectionEnabled) {
+  if (settings.maintenanceMode || !settings.notesEnabled) {
     return jsonError("New notes are temporarily unavailable.", 503, "NOTES_DISABLED");
   }
 
@@ -232,6 +256,7 @@ notesRoutes.post("/api/items", async (c) => {
 
   const body = await readJsonBody<{
     title?: string; text?: string; locked?: boolean; pin?: string; customCode?: string; burnAfterRead?: boolean;
+    ttlSeconds?: number;
   }>(
     c.req.raw,
     Math.max(24_000, limits.maxTextLength + 2_000),
@@ -281,12 +306,21 @@ notesRoutes.post("/api/items", async (c) => {
     code = await createUniqueShareCode(env);
   }
 
+  // Phase 7 expiry chooser (V3-PLAN.md section 9): an optional client-picked
+  // TTL override, clamped to the caller's effective limit and never below a
+  // sane floor -- omitting it (or sending an invalid value) keeps today's
+  // default behavior of always using the full effective ttlSeconds.
+  const requestedTtlSeconds = Number(body.data.ttlSeconds);
+  const effectiveTtlSeconds = Number.isFinite(requestedTtlSeconds) && requestedTtlSeconds > 0
+    ? Math.min(Math.floor(requestedTtlSeconds), limits.ttlSeconds)
+    : limits.ttlSeconds;
+
   const roomId = await getRoomId(c.req.raw, env.APP_SECRET);
   const id = randomBase64Url(16);
   const deleteToken = randomBase64Url(32);
   const deleteTokenHash = await hmacHex(env.APP_SECRET, `delete:${deleteToken}`);
   const createdAt = Date.now();
-  const expiresAt = createdAt + limits.ttlSeconds * 1000;
+  const expiresAt = createdAt + effectiveTtlSeconds * 1000;
   let pinSalt: string | null = null;
   let pinHash: string | null = null;
   if (wantsLock) {
@@ -321,7 +355,7 @@ notesRoutes.post("/api/items", async (c) => {
       },
       deleteToken,
       shareUrl: `${url.origin}/s/${code}`,
-      message: `Note created. It will expire automatically in ${formatServerDuration(limits.ttlSeconds)}.`,
+      message: `Note created. It will expire automatically in ${formatServerDuration(effectiveTtlSeconds)}.`,
     },
     201,
   );

@@ -2,8 +2,10 @@ import { Hono } from "hono";
 import type { Env } from "../types";
 import { jsonResponse, jsonError, readJsonBody } from "../lib/http";
 import { hashPassword, randomBase64Url } from "../lib/crypto";
-import { requireAdmin } from "../middleware/auth";
+import { requireAdmin, getSession, getClientIpHash } from "../middleware/auth";
 import { recordEvent } from "../lib/analytics";
+import { recordAudit } from "../lib/audit";
+import { sanitizePartialLimits } from "../lib/limits";
 
 /** Phase 4: admin-only user + role management. All routes here require
  *  rank 0 (see requireAdmin) -- Contributor/Pro accounts have no self-
@@ -46,13 +48,59 @@ usersRoutes.get("/api/admin/users", async (c) => {
   const env = c.env;
   const authError = await requireAdmin(c.req.raw, env);
   if (authError) return authError;
-  const result = await env.DB.prepare(
-    `SELECT u.id, u.email, u.display_name, u.status, u.created_at, u.last_login_at,
+
+  const query = c.req.query();
+  // Pagination/search/filter are opt-in: the existing admin client calls this
+  // endpoint with no query params at all and expects the full list back (it
+  // renders the table client-side) -- so when neither page nor pageSize is
+  // present we preserve the original unpaginated behavior exactly, just with
+  // total/page/pageSize added onto the same response shape.
+  const paginated = query.page !== undefined || query.pageSize !== undefined;
+  const page = Math.max(1, Math.floor(Number(query.page)) || 1);
+  const pageSize = Math.max(1, Math.min(100, Math.floor(Number(query.pageSize)) || 25));
+  const q = typeof query.q === "string" ? query.q.trim().toLowerCase() : "";
+  const roleId = query.role !== undefined && Number.isFinite(Number(query.role)) ? Number(query.role) : null;
+  const status = query.status === "active" || query.status === "disabled" ? query.status : null;
+
+  const conditions: string[] = [];
+  const binds: unknown[] = [];
+  if (q) {
+    conditions.push("(LOWER(u.email) LIKE ? OR LOWER(u.display_name) LIKE ?)");
+    binds.push(`%${q}%`, `%${q}%`);
+  }
+  if (roleId !== null) {
+    conditions.push("u.role_id = ?");
+    binds.push(roleId);
+  }
+  if (status) {
+    conditions.push("u.status = ?");
+    binds.push(status);
+  }
+  const whereSql = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
+
+  const totalRow = await env.DB.prepare(
+    `SELECT COUNT(*) AS count FROM users u JOIN roles r ON r.id = u.role_id ${whereSql}`,
+  )
+    .bind(...binds)
+    .first<{ count: number }>();
+  const total = Number(totalRow?.count || 0);
+
+  const listSql = `SELECT u.id, u.email, u.display_name, u.status, u.created_at, u.last_login_at,
             u.role_id, r.name AS role_name, r.rank, u.custom_limits
      FROM users u JOIN roles r ON r.id = u.role_id
-     ORDER BY r.rank ASC, u.created_at ASC`,
-  ).all<UserRow>();
-  return jsonResponse({ ok: true, users: (result.results || []).map(publicUser) });
+     ${whereSql}
+     ORDER BY r.rank ASC, u.created_at ASC${paginated ? " LIMIT ? OFFSET ?" : ""}`;
+  const listBinds = paginated ? [...binds, pageSize, (page - 1) * pageSize] : binds;
+  const result = await env.DB.prepare(listSql).bind(...listBinds).all<UserRow>();
+  const users = (result.results || []).map(publicUser);
+
+  return jsonResponse({
+    ok: true,
+    users,
+    total,
+    page: paginated ? page : 1,
+    pageSize: paginated ? pageSize : users.length,
+  });
 });
 
 usersRoutes.post("/api/admin/users", async (c) => {
@@ -86,8 +134,9 @@ usersRoutes.post("/api/admin/users", async (c) => {
   if (existing) return jsonError("An account with this email already exists.", 409, "EMAIL_TAKEN");
 
   let customLimitsJson: string | null = null;
-  if (body.data.customLimits && typeof body.data.customLimits === "object") {
-    customLimitsJson = JSON.stringify(body.data.customLimits);
+  if (body.data.customLimits !== undefined) {
+    const sanitized = sanitizePartialLimits(body.data.customLimits);
+    customLimitsJson = Object.keys(sanitized).length ? JSON.stringify(sanitized) : null;
   }
 
   const id = randomBase64Url(16);
@@ -102,6 +151,15 @@ usersRoutes.post("/api/admin/users", async (c) => {
     .run();
 
   await recordEvent(env, c.req.raw, "admin_user_created");
+  const session = await getSession(c.req.raw, env);
+  await recordAudit(env, {
+    actorUserId: session?.sub ?? null,
+    action: "user_created",
+    targetType: "user",
+    targetId: id,
+    after: { email, displayName, roleId, hasCustomLimits: customLimitsJson !== null },
+    ipHash: await getClientIpHash(c.req.raw, env.APP_SECRET),
+  });
   return jsonResponse({ ok: true, message: "Account created.", user: { id, email, displayName, roleId } }, 201);
 });
 
@@ -129,10 +187,19 @@ usersRoutes.patch("/api/admin/users/:userId", async (c) => {
 
   const updates: string[] = [];
   const values: unknown[] = [];
+  // Tracks which fields changed (and their new, non-sensitive values) for
+  // the audit log -- before-values aren't captured here since the `current`
+  // lookup above only fetches id/rank, and fetching the full prior row
+  // would mean an extra query that isn't already happening.
+  const changedFields: string[] = [];
+  const auditAfter: Record<string, unknown> = {};
 
   if (typeof body.data.displayName === "string" && body.data.displayName.trim()) {
+    const displayName = body.data.displayName.trim().slice(0, 80);
     updates.push("display_name = ?");
-    values.push(body.data.displayName.trim().slice(0, 80));
+    values.push(displayName);
+    changedFields.push("displayName");
+    auditAfter.displayName = displayName;
   }
   if (body.data.roleId !== undefined) {
     const roleId = Number(body.data.roleId);
@@ -140,6 +207,8 @@ usersRoutes.patch("/api/admin/users/:userId", async (c) => {
     if (!role) return jsonError("Unknown role.", 400, "UNKNOWN_ROLE");
     updates.push("role_id = ?");
     values.push(roleId);
+    changedFields.push("roleId");
+    auditAfter.roleId = roleId;
   }
   if (body.data.status !== undefined) {
     if (body.data.status !== "active" && body.data.status !== "disabled") {
@@ -158,12 +227,16 @@ usersRoutes.patch("/api/admin/users/:userId", async (c) => {
     }
     updates.push("status = ?");
     values.push(body.data.status);
+    changedFields.push("status");
+    auditAfter.status = body.data.status;
   }
   if (body.data.customLimits !== undefined) {
+    const sanitized = sanitizePartialLimits(body.data.customLimits);
+    const customLimitsJson = Object.keys(sanitized).length ? JSON.stringify(sanitized) : null;
     updates.push("custom_limits = ?");
-    values.push(
-      body.data.customLimits && typeof body.data.customLimits === "object" ? JSON.stringify(body.data.customLimits) : null,
-    );
+    values.push(customLimitsJson);
+    changedFields.push("customLimits");
+    auditAfter.customLimits = sanitized;
   }
   if (typeof body.data.password === "string" && body.data.password) {
     if (body.data.password.length < 10) return jsonError("Password must be at least 10 characters.", 400, "WEAK_PASSWORD");
@@ -171,6 +244,7 @@ usersRoutes.patch("/api/admin/users/:userId", async (c) => {
     const passwordHash = await hashPassword(env.APP_SECRET, salt, body.data.password);
     updates.push("password_salt = ?", "password_hash = ?");
     values.push(salt, passwordHash);
+    changedFields.push("password"); // never log the actual password/hash
   }
 
   if (!updates.length) return jsonError("No changes provided.", 400, "NO_CHANGES");
@@ -180,6 +254,15 @@ usersRoutes.patch("/api/admin/users/:userId", async (c) => {
     .run();
 
   await recordEvent(env, c.req.raw, "admin_user_updated");
+  const session = await getSession(c.req.raw, env);
+  await recordAudit(env, {
+    actorUserId: session?.sub ?? null,
+    action: "user_updated",
+    targetType: "user",
+    targetId: userId,
+    after: { changedFields, ...auditAfter },
+    ipHash: await getClientIpHash(c.req.raw, env.APP_SECRET),
+  });
   return jsonResponse({ ok: true, message: "Account updated." });
 });
 
@@ -209,6 +292,15 @@ usersRoutes.delete("/api/admin/users/:userId", async (c) => {
 
   await env.DB.prepare("DELETE FROM users WHERE id = ?").bind(userId).run();
   await recordEvent(env, c.req.raw, "admin_user_deleted");
+  const session = await getSession(c.req.raw, env);
+  await recordAudit(env, {
+    actorUserId: session?.sub ?? null,
+    action: "user_deleted",
+    targetType: "user",
+    targetId: userId,
+    before: { id: current.id, rank: current.rank },
+    ipHash: await getClientIpHash(c.req.raw, env.APP_SECRET),
+  });
   return jsonResponse({ ok: true, message: "Account deleted." });
 });
 
@@ -251,10 +343,15 @@ usersRoutes.patch("/api/admin/roles/:roleId", async (c) => {
 
   const updates: string[] = [];
   const values: unknown[] = [];
+  const changedFields: string[] = [];
+  const auditAfter: Record<string, unknown> = {};
 
   if (typeof body.data.name === "string" && body.data.name.trim()) {
+    const name = body.data.name.trim().slice(0, 40);
     updates.push("name = ?");
-    values.push(body.data.name.trim().slice(0, 40));
+    values.push(name);
+    changedFields.push("name");
+    auditAfter.name = name;
   }
   if (body.data.defaultLimits !== undefined) {
     if (role.rank === 0) {
@@ -263,8 +360,11 @@ usersRoutes.patch("/api/admin/roles/:roleId", async (c) => {
     if (!body.data.defaultLimits || typeof body.data.defaultLimits !== "object") {
       return jsonError("defaultLimits must be an object.", 400, "INVALID_LIMITS");
     }
+    const sanitized = sanitizePartialLimits(body.data.defaultLimits);
     updates.push("default_limits = ?");
-    values.push(JSON.stringify(body.data.defaultLimits));
+    values.push(JSON.stringify(sanitized));
+    changedFields.push("defaultLimits");
+    auditAfter.defaultLimits = sanitized;
   }
 
   if (!updates.length) return jsonError("No changes provided.", 400, "NO_CHANGES");
@@ -274,5 +374,14 @@ usersRoutes.patch("/api/admin/roles/:roleId", async (c) => {
     .run();
 
   await recordEvent(env, c.req.raw, "admin_role_updated");
+  const session = await getSession(c.req.raw, env);
+  await recordAudit(env, {
+    actorUserId: session?.sub ?? null,
+    action: "role_updated",
+    targetType: "role",
+    targetId: String(roleId),
+    after: { changedFields, ...auditAfter },
+    ipHash: await getClientIpHash(c.req.raw, env.APP_SECRET),
+  });
   return jsonResponse({ ok: true, message: "Role updated." });
 });

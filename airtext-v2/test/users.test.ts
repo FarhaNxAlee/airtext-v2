@@ -166,3 +166,47 @@ describe("PATCH /api/admin/roles/:id", () => {
     expect(response.status).toBe(400);
   });
 });
+
+describe("GET /api/admin/users", () => {
+  it("requires authentication", async () => {
+    const response = await SELF.fetch("https://example.com/api/admin/users");
+    expect(response.status).toBe(401);
+  });
+
+  it("returns the full unpaginated list when no page params are given (existing client behavior)", async () => {
+    const cookie = await login();
+    const response = await SELF.fetch("https://example.com/api/admin/users", { headers: { cookie } });
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as { users: unknown[]; total: number; page: number; pageSize: number };
+    expect(body.users.length).toBe(body.total);
+    expect(body.page).toBe(1);
+  });
+
+  it("paginates and searches when page params are given", async () => {
+    const cookie = await login();
+    const proRole = await env.DB.prepare("SELECT id FROM roles WHERE rank = 2").first<{ id: number }>();
+    for (let i = 0; i < 3; i += 1) {
+      await SELF.fetch("https://example.com/api/admin/users", {
+        method: "POST",
+        headers: { cookie, "content-type": "application/json", "x-airtext-admin": "1" },
+        body: JSON.stringify({
+          email: `paginated-user-${i}@test.local`,
+          password: "a-strong-password-1",
+          displayName: `Paginated User ${i}`,
+          roleId: proRole!.id,
+        }),
+      });
+    }
+
+    const page1 = await SELF.fetch("https://example.com/api/admin/users?page=1&pageSize=2", { headers: { cookie } });
+    const page1Body = (await page1.json()) as { users: unknown[]; total: number; page: number; pageSize: number };
+    expect(page1Body.users.length).toBe(2);
+    expect(page1Body.pageSize).toBe(2);
+    expect(page1Body.total).toBeGreaterThanOrEqual(4); // 3 new + the seeded test admin
+
+    const filtered = await SELF.fetch("https://example.com/api/admin/users?q=paginated-user-1", { headers: { cookie } });
+    const filteredBody = (await filtered.json()) as { users: { email: string }[]; total: number };
+    expect(filteredBody.total).toBe(1);
+    expect(filteredBody.users[0].email).toBe("paginated-user-1@test.local");
+  });
+});

@@ -395,12 +395,21 @@ filesRoutes.post("/api/files", async (c) => {
     code = await createUniqueFileShareCode(env);
   }
 
+  // Phase 7 expiry chooser (V3-PLAN.md section 9): optional client-picked
+  // TTL override, clamped to the caller's effective limit -- omitted or
+  // invalid keeps today's default of the full effective fileTtlSeconds.
+  const requestedTtlSecondsRaw = form.get("ttlSeconds");
+  const requestedTtlSeconds = Number(requestedTtlSecondsRaw);
+  const effectiveTtlSeconds = typeof requestedTtlSecondsRaw === "string" && Number.isFinite(requestedTtlSeconds) && requestedTtlSeconds > 0
+    ? Math.min(Math.floor(requestedTtlSeconds), limits.fileTtlSeconds)
+    : limits.fileTtlSeconds;
+
   const roomId = await getRoomId(c.req.raw, env.APP_SECRET);
   const groupId = randomBase64Url(16);
   const deleteToken = randomBase64Url(32);
   const deleteTokenHash = await hmacHex(env.APP_SECRET, `delete:${deleteToken}`);
   const createdAt = Date.now();
-  const expiresAt = createdAt + limits.fileTtlSeconds * 1000;
+  const expiresAt = createdAt + effectiveTtlSeconds * 1000;
   let pinSalt: string | null = null;
   let pinHash: string | null = null;
   if (wantsLock) {
@@ -472,7 +481,7 @@ filesRoutes.post("/api/files", async (c) => {
       },
       deleteToken,
       shareUrl: `${url.origin}/f/${code}`,
-      message: `File${uploaded.length === 1 ? "" : "s"} uploaded. Will expire automatically in ${formatServerDuration(limits.fileTtlSeconds)}.`,
+      message: `File${uploaded.length === 1 ? "" : "s"} uploaded. Will expire automatically in ${formatServerDuration(effectiveTtlSeconds)}.`,
     },
     201,
   );

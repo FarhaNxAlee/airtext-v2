@@ -1,4 +1,5 @@
 import "./style.css";
+import { COPY } from "./copy.js";
 
 (function () {
       "use strict";
@@ -16,7 +17,14 @@ import "./style.css";
         scanner: null,
         scannerRunning: false,
         pollingTimer: null,
-        adminData: null,
+        admin: {
+          activeTab: "overview",
+          usersById: Object.create(null),
+          rolesCache: [],
+          drops: { page: 1, pageSize: 25, total: 0, q: "", type: "", filter: "", sort: "newest", selected: Object.create(null) },
+          users: { page: 1, pageSize: 25, total: 0, q: "", role: "", status: "" },
+          inbox: { tab: "feedback", page: 1, pageSize: 25, total: 0, status: "", pendingApproval: null }
+        },
         files: [],
         currentFile: null,
         currentFileCode: null
@@ -38,7 +46,16 @@ import "./style.css";
           return;
         }
 
+        if (APP.initialAccount) {
+          // /account now renders inside #public-app's shared header/footer
+          // (V3 fix) instead of a separate full-screen overlay -- no
+          // container toggle needed, just run the account page's own init.
+          initAccount();
+          return;
+        }
+
         applyPublicSettings();
+        updateAccountLinkLabel();
         switchTab("share");
         updateCounters();
         loadLocalItems(false);
@@ -46,6 +63,11 @@ import "./style.css";
         startPolling();
         window.setInterval(updateCountdowns, 1000);
         updateCountdowns();
+        populateExpiryChoosers();
+        startWifiLiveCount();
+        bindPasteAnywhere();
+        bindDragAnywhere();
+        syncWebShareButtonVisibility();
 
         if (APP.initialShareCode) {
           window.setTimeout(function () {
@@ -57,11 +79,48 @@ import "./style.css";
             openFileShareByCode(APP.initialFileShareCode, true, APP.initialShareVia || "link");
           }, 120);
         }
+
+        var focusTarget = new URLSearchParams(window.location.search).get("focus");
+        if (focusTarget === "create") {
+          window.setTimeout(function () { focusSection("create-card", "share-title"); }, 120);
+        } else if (focusTarget === "files") {
+          window.setTimeout(function () { focusSection("files-card", "file-title"); }, 120);
+        }
       }
 
       function cacheElements() {
         el.publicApp = document.getElementById("public-app");
         el.adminApp = document.getElementById("admin-app");
+        el.accountApp = document.getElementById("account-app");
+        el.drawerAuthSlot = document.getElementById("drawer-auth-slot");
+        el.accountAvatar = document.getElementById("account-avatar");
+        el.accountSigninCard = document.getElementById("account-signin-card");
+        el.accountBenefitsCard = document.getElementById("account-benefits-card");
+        el.accountDashboard = document.getElementById("account-dashboard");
+        el.accountLoginForm = document.getElementById("account-login-form");
+        el.accountEmail = document.getElementById("account-email");
+        el.accountPassword = document.getElementById("account-password");
+        el.accountLoginSubmit = document.getElementById("account-login-submit");
+        el.accountLoginError = document.getElementById("account-login-error");
+        el.accountLogout = document.getElementById("account-logout");
+        el.accountRequestForm = document.getElementById("account-request-form");
+        el.accountRequestName = document.getElementById("account-request-name");
+        el.accountRequestEmail = document.getElementById("account-request-email");
+        el.accountRequestReason = document.getElementById("account-request-reason");
+        el.accountRequestSubmit = document.getElementById("account-request-submit");
+        el.accountRequestStatus = document.getElementById("account-request-status");
+        el.accountDisplayName = document.getElementById("account-display-name");
+        el.accountEmailDisplay = document.getElementById("account-email-display");
+        el.accountRoleBadge = document.getElementById("account-role-badge");
+        el.accountLimitsGrid = document.getElementById("account-limits-grid");
+        el.accountNotesList = document.getElementById("account-notes-list");
+        el.accountFilesList = document.getElementById("account-files-list");
+        el.accountPasswordForm = document.getElementById("account-password-form");
+        el.accountCurrentPassword = document.getElementById("account-current-password");
+        el.accountNewPassword = document.getElementById("account-new-password");
+        el.accountConfirmPassword = document.getElementById("account-confirm-password");
+        el.accountPasswordSubmit = document.getElementById("account-password-submit");
+        el.accountPasswordStatus = document.getElementById("account-password-status");
         el.createForm = document.getElementById("create-form");
         el.createSubmit = document.getElementById("create-submit");
         el.shareTitle = document.getElementById("share-title");
@@ -77,6 +136,7 @@ import "./style.css";
         el.customCodeInput = document.getElementById("custom-code-input");
         el.maintenanceBanner = document.getElementById("maintenance-banner");
         el.createExpiryCopy = document.getElementById("create-expiry-copy");
+        el.createTtlSelect = document.getElementById("create-ttl-select");
 
         el.joinForm = document.getElementById("join-form");
         el.joinCode = document.getElementById("join-code");
@@ -92,6 +152,7 @@ import "./style.css";
         el.fileBurnToggle = document.getElementById("file-burn-toggle");
         el.fileCustomCodeFieldWrap = document.getElementById("file-custom-code-field-wrap");
         el.fileCustomCodeInput = document.getElementById("file-custom-code-input");
+        el.fileTtlSelect = document.getElementById("file-ttl-select");
         el.stagedFilesList = document.getElementById("staged-files-list");
         el.stagedFilesTotal = document.getElementById("staged-files-total");
         el.filesDropZone = document.getElementById("files-drop-zone");
@@ -150,6 +211,9 @@ import "./style.css";
         el.qrOutput = document.getElementById("qr-output");
         el.qrCodeText = document.getElementById("qr-code-text");
         el.qrLinkInput = document.getElementById("qr-link-input");
+        el.webShareButton = document.getElementById("web-share-button");
+
+        el.wifiLiveCount = document.getElementById("wifi-live-count");
 
         el.scannerModal = document.getElementById("scanner-modal");
         el.scannerStatus = document.getElementById("scanner-status");
@@ -164,7 +228,11 @@ import "./style.css";
         el.feedbackRating = document.getElementById("feedback-rating");
         el.feedbackSubmit = document.getElementById("feedback-submit");
 
-        el.adminUsers = document.getElementById("admin-users");
+        el.adminUsers = document.getElementById("admin-users-list");
+        el.adminUsersPagination = document.getElementById("admin-users-pagination");
+        el.adminUsersSearch = document.getElementById("admin-users-search");
+        el.adminUsersRoleFilter = document.getElementById("admin-users-role-filter");
+        el.adminUsersStatusFilter = document.getElementById("admin-users-status-filter");
         el.adminRoles = document.getElementById("admin-roles");
         el.adminUserCreateForm = document.getElementById("admin-user-create-form");
         el.newUserEmail = document.getElementById("new-user-email");
@@ -172,7 +240,9 @@ import "./style.css";
         el.newUserPassword = document.getElementById("new-user-password");
         el.newUserRole = document.getElementById("new-user-role");
         el.adminUserCreateSubmit = document.getElementById("admin-user-create-submit");
+        el.adminUserCreateSection = document.getElementById("admin-user-create-section");
 
+        el.adminLoginHeader = document.getElementById("admin-login-header");
         el.adminLoginCard = document.getElementById("admin-login-card");
         el.adminLoginHelp = document.getElementById("admin-login-help");
         el.adminLoginForm = document.getElementById("admin-login-form");
@@ -182,22 +252,45 @@ import "./style.css";
         el.adminDashboard = document.getElementById("admin-dashboard");
         el.adminLogout = document.getElementById("admin-logout");
         el.adminRefresh = document.getElementById("admin-refresh");
-        el.adminStats = document.getElementById("admin-stats");
-        el.adminChart = document.getElementById("admin-chart");
-        el.adminEventCounts = document.getElementById("admin-event-counts");
+        el.adminSearch = document.getElementById("admin-search");
+        el.adminKpis = document.getElementById("admin-kpis");
+        el.adminAttention = document.getElementById("admin-attention");
+        el.adminActivityFeed = document.getElementById("admin-activity-feed");
+        el.adminTrendChart = document.getElementById("admin-trend-chart");
+        el.adminInboxBadge = document.getElementById("admin-inbox-badge");
+        el.adminHealthD1 = document.getElementById("admin-health-d1");
+        el.adminHealthR2 = document.getElementById("admin-health-r2");
         el.adminSettingsForm = document.getElementById("admin-settings-form");
         el.adminSettingsSubmit = document.getElementById("admin-settings-submit");
-        el.adminNotes = document.getElementById("admin-notes");
-        el.adminFeedback = document.getElementById("admin-feedback");
-        el.adminFiles = document.getElementById("admin-files");
+
+        el.adminDropsList = document.getElementById("admin-drops-list");
+        el.adminDropsPagination = document.getElementById("admin-drops-pagination");
+        el.adminDropsSearch = document.getElementById("admin-drops-search");
+        el.adminDropsTypeFilter = document.getElementById("admin-drops-type-filter");
+        el.adminDropsStatusFilter = document.getElementById("admin-drops-status-filter");
+        el.adminDropsSort = document.getElementById("admin-drops-sort");
+        el.adminDropsBulkDelete = document.getElementById("admin-drops-bulk-delete");
+        el.adminDropsSelectAll = document.getElementById("admin-drops-select-all");
+
+        el.adminInboxList = document.getElementById("admin-inbox-list");
+        el.adminInboxPagination = document.getElementById("admin-inbox-pagination");
+        el.adminInboxCounts = document.getElementById("admin-inbox-counts");
+        el.adminInboxStatusFilter = document.getElementById("admin-inbox-status-filter");
+        el.adminInboxTabs = document.querySelectorAll("[data-inbox-tab]");
+
+        el.adminSettingsSubtabs = document.querySelectorAll("[data-settings-subtab]");
+        el.adminSettingsPanels = document.querySelectorAll("[data-settings-panel]");
+
         el.adminStorageBar = document.getElementById("admin-storage-bar");
         el.adminStorageFill = document.getElementById("admin-storage-fill");
         el.adminStorageLabel = document.getElementById("admin-storage-label");
         el.adminStorageWarning = document.getElementById("admin-storage-warning");
         el.adminTabs = document.querySelectorAll("[data-admin-tab]");
         el.adminTabPanels = document.querySelectorAll("[data-admin-panel]");
-        el.adminContentFields = document.getElementById("admin-content-fields");
-        el.adminStorageStatus = document.getElementById("admin-storage-status");
+        el.adminContentFieldsGeneral = document.getElementById("admin-content-fields-general");
+        el.adminContentFieldsLimits = document.getElementById("admin-content-fields-limits");
+        el.adminContentFieldsContent = document.getElementById("admin-content-fields-content");
+        el.adminContentFieldsSeo = document.getElementById("admin-content-fields-seo");
 
         el.settingAppName = document.getElementById("setting-app-name");
         el.settingTagline = document.getElementById("setting-tagline");
@@ -215,77 +308,185 @@ import "./style.css";
         el.settingFeedbackEnabled = document.getElementById("setting-feedback-enabled");
         el.settingAnalyticsEnabled = document.getElementById("setting-analytics-enabled");
         el.settingMaintenance = document.getElementById("setting-maintenance");
-        el.settingHeroEnabled = document.getElementById("setting-hero-enabled");
-        el.settingHeroPanelEnabled = document.getElementById("setting-hero-panel-enabled");
         el.settingAnnouncementEnabled = document.getElementById("setting-announcement-enabled");
-        el.settingTickerEnabled = document.getElementById("setting-ticker-enabled");
-        el.settingCreateSectionEnabled = document.getElementById("setting-create-section-enabled");
-        el.settingAvailableSectionEnabled = document.getElementById("setting-available-section-enabled");
-        el.settingOpenCodeSectionEnabled = document.getElementById("setting-open-code-section-enabled");
-        el.settingGuideEnabled = document.getElementById("setting-guide-enabled");
-        el.settingAboutEnabled = document.getElementById("setting-about-enabled");
-        el.settingFooterEnabled = document.getElementById("setting-footer-enabled");
-        el.settingSocialLinksEnabled = document.getElementById("setting-social-links-enabled");
-        el.settingFooterShowYear = document.getElementById("setting-footer-show-year");
-        el.settingFooterShowDeveloper = document.getElementById("setting-footer-show-developer");
+
+        // /login (V3 unified front door -- separate from the /account
+        // section's own sign-in form, since it redirects instead of
+        // switching to a dashboard in place).
+        el.loginForm = document.getElementById("login-form");
+        el.loginEmail = document.getElementById("login-email");
+        el.loginPassword = document.getElementById("login-password");
+        el.loginSubmit = document.getElementById("login-submit");
+        el.loginError = document.getElementById("login-error");
+        el.loginAdminHint = document.getElementById("login-admin-hint");
       }
 
       function bindEvents() {
         el.mainTabs.forEach(function (tab) {
           tab.addEventListener("click", function () { switchTab(tab.getAttribute("data-tab")); });
         });
-        el.createForm.addEventListener("submit", createShare);
-        el.joinForm.addEventListener("submit", function (event) {
-          event.preventDefault();
-          var code = normalizeCode(el.joinCode.value);
-          if (!code) return toast("Enter a valid share code.", "error");
-          openAnyShareByCode(code, true, "code");
-        });
-        el.unlockForm.addEventListener("submit", unlockCurrentItem);
-        el.feedbackForm.addEventListener("submit", submitFeedback);
-        el.notesSearch.addEventListener("input", renderLocalItems);
-        el.notesFilter.addEventListener("change", renderLocalItems);
-        el.fileUploadForm.addEventListener("submit", createFileShare);
-        el.fileUnlockForm.addEventListener("submit", unlockCurrentFile);
-        el.fileLockToggle.addEventListener("change", function () {
-          el.filePinFieldWrap.classList.toggle("hidden", !el.fileLockToggle.checked);
-          if (el.fileLockToggle.checked) window.setTimeout(function () { el.filePin.focus(); }, 60);
-          else el.filePin.value = "";
-        });
-        el.fileInput.addEventListener("change", function () { renderStagedFiles(); });
-        el.filesDropZone.addEventListener("dragover", function (event) { event.preventDefault(); });
-        el.filesDropZone.addEventListener("drop", function (event) {
-          event.preventDefault();
-          var dropped = event.dataTransfer && event.dataTransfer.files;
-          if (dropped && dropped.length) {
-            el.fileInput.files = dropped;
-            renderStagedFiles();
-          }
-        });
-        el.filesRefreshButton.addEventListener("click", function () { loadLocalFiles(true); });
-        el.qrtoolForm.addEventListener("submit", generateLinkQrTool);
-        el.adminLoginForm.addEventListener("submit", adminLogin);
-        el.adminSettingsForm.addEventListener("submit", saveAdminSettings);
-        el.adminLogout.addEventListener("click", adminLogout);
-        el.adminRefresh.addEventListener("click", loadAdminDashboard);
+        if (el.createForm) el.createForm.addEventListener("submit", createShare);
+        if (el.joinForm) {
+          el.joinForm.addEventListener("submit", function (event) {
+            event.preventDefault();
+            var code = normalizeCode(el.joinCode.value);
+            if (!code) return toast("Enter a valid share code.", "error");
+            openAnyShareByCode(code, true, "code");
+          });
+        }
+        if (el.unlockForm) el.unlockForm.addEventListener("submit", unlockCurrentItem);
+        if (el.feedbackForm) el.feedbackForm.addEventListener("submit", submitFeedback);
+        if (el.notesSearch) el.notesSearch.addEventListener("input", renderLocalItems);
+        if (el.notesFilter) el.notesFilter.addEventListener("change", renderLocalItems);
+        if (el.fileUploadForm) el.fileUploadForm.addEventListener("submit", createFileShare);
+        if (el.fileUnlockForm) el.fileUnlockForm.addEventListener("submit", unlockCurrentFile);
+        if (el.fileLockToggle) {
+          el.fileLockToggle.addEventListener("change", function () {
+            if (el.filePinFieldWrap) el.filePinFieldWrap.classList.toggle("hidden", !el.fileLockToggle.checked);
+            if (el.fileLockToggle.checked) window.setTimeout(function () { if (el.filePin) el.filePin.focus(); }, 60);
+            else if (el.filePin) el.filePin.value = "";
+          });
+        }
+        if (el.fileInput) el.fileInput.addEventListener("change", function () { renderStagedFiles(); });
+        if (el.filesDropZone) {
+          el.filesDropZone.addEventListener("dragover", function (event) { event.preventDefault(); });
+          el.filesDropZone.addEventListener("drop", function (event) {
+            event.preventDefault();
+            var dropped = event.dataTransfer && event.dataTransfer.files;
+            if (dropped && dropped.length && el.fileInput) {
+              el.fileInput.files = dropped;
+              renderStagedFiles();
+            }
+          });
+        }
+        if (el.filesRefreshButton) el.filesRefreshButton.addEventListener("click", function () { loadLocalFiles(true); });
+        if (el.qrtoolForm) el.qrtoolForm.addEventListener("submit", generateLinkQrTool);
+        if (el.adminLoginForm) el.adminLoginForm.addEventListener("submit", adminLogin);
+        if (el.adminSettingsForm) el.adminSettingsForm.addEventListener("submit", saveAdminSettings);
+        if (el.adminLogout) el.adminLogout.addEventListener("click", adminLogout);
+        if (el.adminRefresh) el.adminRefresh.addEventListener("click", function () { loadAdminOverview(); });
         el.adminTabs.forEach(function (tab) {
           tab.addEventListener("click", function () {
             var name = tab.getAttribute("data-admin-tab");
             switchAdminTab(name);
-            if (name === "users") loadAdminUsers();
+            loadAdminTabData(name);
+          });
+        });
+        el.adminSettingsSubtabs.forEach(function (tab) {
+          tab.addEventListener("click", function () { switchSettingsSubtab(tab.getAttribute("data-settings-subtab")); });
+        });
+        el.adminInboxTabs.forEach(function (tab) {
+          tab.addEventListener("click", function () {
+            state.admin.inbox.tab = tab.getAttribute("data-inbox-tab");
+            state.admin.inbox.page = 1;
+            switchInboxSubtab(state.admin.inbox.tab);
+            loadAdminInbox();
           });
         });
         if (el.adminUserCreateForm) el.adminUserCreateForm.addEventListener("submit", createAdminUser);
 
-        el.shareTitle.addEventListener("input", updateCounters);
-        el.shareText.addEventListener("input", updateCounters);
-        el.lockToggle.addEventListener("change", function () {
-          el.pinFieldWrap.classList.toggle("hidden", !el.lockToggle.checked);
-          if (el.lockToggle.checked) window.setTimeout(function () { el.sharePin.focus(); }, 60);
-          else el.sharePin.value = "";
+        if (el.adminSearch) {
+          el.adminSearch.addEventListener("input", debounce(function () {
+            handleAdminTopSearch(el.adminSearch.value.trim());
+          }, 250));
+        }
+        if (el.adminDropsSearch) {
+          el.adminDropsSearch.addEventListener("input", debounce(function () {
+            state.admin.drops.q = el.adminDropsSearch.value.trim();
+            state.admin.drops.page = 1;
+            loadAdminDrops();
+          }, 250));
+        }
+        if (el.adminDropsTypeFilter) {
+          el.adminDropsTypeFilter.addEventListener("change", function () {
+            state.admin.drops.type = el.adminDropsTypeFilter.value;
+            state.admin.drops.page = 1;
+            loadAdminDrops();
+          });
+        }
+        if (el.adminDropsStatusFilter) {
+          el.adminDropsStatusFilter.addEventListener("change", function () {
+            state.admin.drops.filter = el.adminDropsStatusFilter.value;
+            state.admin.drops.page = 1;
+            loadAdminDrops();
+          });
+        }
+        if (el.adminDropsSort) {
+          el.adminDropsSort.addEventListener("change", function () {
+            state.admin.drops.sort = el.adminDropsSort.value;
+            state.admin.drops.page = 1;
+            loadAdminDrops();
+          });
+        }
+        if (el.adminDropsBulkDelete) el.adminDropsBulkDelete.addEventListener("click", submitDropsBulkDelete);
+        if (el.adminDropsSelectAll) el.adminDropsSelectAll.addEventListener("change", function () {
+          toggleSelectAllDrops(el.adminDropsSelectAll.checked);
         });
-        el.joinCode.addEventListener("input", function () {
-          el.joinCode.value = normalizeCode(el.joinCode.value);
+
+        if (el.adminUsersSearch) {
+          el.adminUsersSearch.addEventListener("input", debounce(function () {
+            state.admin.users.q = el.adminUsersSearch.value.trim();
+            state.admin.users.page = 1;
+            loadAdminUsersPage();
+          }, 250));
+        }
+        if (el.adminUsersRoleFilter) {
+          el.adminUsersRoleFilter.addEventListener("change", function () {
+            state.admin.users.role = el.adminUsersRoleFilter.value;
+            state.admin.users.page = 1;
+            loadAdminUsersPage();
+          });
+        }
+        if (el.adminUsersStatusFilter) {
+          el.adminUsersStatusFilter.addEventListener("change", function () {
+            state.admin.users.status = el.adminUsersStatusFilter.value;
+            state.admin.users.page = 1;
+            loadAdminUsersPage();
+          });
+        }
+        if (el.adminInboxStatusFilter) {
+          el.adminInboxStatusFilter.addEventListener("change", function () {
+            state.admin.inbox.status = el.adminInboxStatusFilter.value;
+            state.admin.inbox.page = 1;
+            loadAdminInbox();
+          });
+        }
+        if (el.accountLoginForm) el.accountLoginForm.addEventListener("submit", accountLogin);
+        if (el.accountLogout) el.accountLogout.addEventListener("click", accountLogout);
+        if (el.accountRequestForm) el.accountRequestForm.addEventListener("submit", submitAccountRequest);
+        if (el.accountPasswordForm) el.accountPasswordForm.addEventListener("submit", changeAccountPassword);
+        if (el.loginForm) el.loginForm.addEventListener("submit", submitLoginPage);
+
+        if (el.shareTitle) el.shareTitle.addEventListener("input", updateCounters);
+        if (el.shareText) el.shareText.addEventListener("input", updateCounters);
+        if (el.lockToggle) {
+          el.lockToggle.addEventListener("change", function () {
+            if (el.pinFieldWrap) el.pinFieldWrap.classList.toggle("hidden", !el.lockToggle.checked);
+            if (el.lockToggle.checked) window.setTimeout(function () { if (el.sharePin) el.sharePin.focus(); }, 60);
+            else if (el.sharePin) el.sharePin.value = "";
+          });
+        }
+        if (el.joinCode) {
+          el.joinCode.addEventListener("input", function () {
+            el.joinCode.value = normalizeCode(el.joinCode.value);
+          });
+        }
+
+        // Nav dropdowns (Send / Nearby-Receive / Tools / Help / avatar) are
+        // plain <details> elements -- close any others when one opens, and
+        // close them all when clicking outside, so only one is open at a time.
+        document.querySelectorAll("details.nav-dropdown").forEach(function (node) {
+          node.addEventListener("toggle", function () {
+            if (!node.open) return;
+            document.querySelectorAll("details.nav-dropdown[open]").forEach(function (other) {
+              if (other !== node) other.removeAttribute("open");
+            });
+          });
+        });
+        document.addEventListener("click", function (event) {
+          document.querySelectorAll("details.nav-dropdown[open]").forEach(function (node) {
+            if (!node.contains(event.target)) node.removeAttribute("open");
+          });
         });
 
         document.addEventListener("click", function (event) {
@@ -323,14 +524,10 @@ import "./style.css";
           }
           if (action === "close-drawer") closeDrawer();
           if (action === "refresh-page") window.location.reload();
-          if (action === "drawer-create") {
-            closeDrawer();
-            focusSection("create-card", "share-title");
-          }
-          if (action === "drawer-join") {
-            closeDrawer();
-            focusSection("join-card", "join-code");
-          }
+          if (action === "nav-sign-out") signOutFromNav();
+          if (action === "quick-share-tab") activateQuickShareTab(actionElement.getAttribute("data-quick-tab"));
+          if (action === "how-it-works-tab") activateHowItWorksTab(actionElement.getAttribute("data-how-tab"));
+          if (action === "web-share") doWebShare();
 
           var itemId = actionElement.getAttribute("data-item-id");
           if (action === "open-local-item" && itemId) openLocalItem(itemId);
@@ -340,24 +537,70 @@ import "./style.css";
           if (action === "open-local-file" && fileId) openLocalFile(fileId);
           if (action === "share-local-file" && fileId) showQrForListFile(fileId);
 
-          var adminItemId = actionElement.getAttribute("data-admin-item-id");
-          if (action === "admin-delete-note" && adminItemId) adminDeleteNote(adminItemId);
-          var adminFileId = actionElement.getAttribute("data-admin-file-id");
-          if (action === "admin-delete-file" && adminFileId) adminDeleteFile(adminFileId);
           var feedbackId = actionElement.getAttribute("data-feedback-id");
           if (action === "admin-feedback-status" && feedbackId) {
             updateFeedbackStatus(feedbackId, actionElement.getAttribute("data-feedback-status"));
           }
           if (action === "admin-delete-feedback" && feedbackId) deleteFeedback(feedbackId);
+          if (action === "admin-approve-request" && feedbackId) {
+            approveAccountRequest(actionElement.getAttribute("data-name"), actionElement.getAttribute("data-email"));
+          }
 
           var targetUserId = actionElement.getAttribute("data-user-id");
           if (action === "admin-toggle-user-status" && targetUserId) {
             toggleUserStatus(targetUserId, actionElement.getAttribute("data-user-status"));
           }
           if (action === "admin-delete-user" && targetUserId) deleteAdminUser(targetUserId);
+          if (action === "admin-toggle-user-limits" && targetUserId) toggleUserLimitsForm(targetUserId);
+          if (action === "admin-save-user-limits" && targetUserId) saveUserLimits(targetUserId);
+          if (action === "admin-toggle-user-edit" && targetUserId) toggleUserEditForm(targetUserId);
+          if (action === "admin-save-user-edit" && targetUserId) saveUserEdit(targetUserId);
 
           var targetRoleId = actionElement.getAttribute("data-role-id");
           if (action === "admin-save-role" && targetRoleId) saveRole(targetRoleId);
+
+          var dropType = actionElement.getAttribute("data-drop-type");
+          var dropId = actionElement.getAttribute("data-drop-id");
+          if (action === "admin-delete-drop" && dropType && dropId) adminDeleteDrop(dropType, dropId);
+          if (action === "admin-drops-select-all") toggleSelectAllDrops(actionElement.checked);
+          if (action === "admin-drops-select-row" && dropType && dropId) {
+            toggleDropSelection(dropType, dropId, actionElement.checked);
+          }
+          if (action === "admin-drops-page-prev") changeDropsPage(-1);
+          if (action === "admin-drops-page-next") changeDropsPage(1);
+          if (action === "admin-users-page-prev") changeUsersPage(-1);
+          if (action === "admin-users-page-next") changeUsersPage(1);
+          if (action === "admin-inbox-page-prev") changeInboxPage(-1);
+          if (action === "admin-inbox-page-next") changeInboxPage(1);
+          if (action === "admin-goto-tab") {
+            var gotoTab = actionElement.getAttribute("data-admin-goto");
+            if (gotoTab) {
+              switchAdminTab(gotoTab);
+              loadAdminTabData(gotoTab);
+              if (gotoTab === "inbox" && actionElement.getAttribute("data-inbox-goto")) {
+                state.admin.inbox.tab = actionElement.getAttribute("data-inbox-goto");
+                switchInboxSubtab(state.admin.inbox.tab);
+                loadAdminInbox();
+              }
+            }
+          }
+
+          var accountNoteId = actionElement.getAttribute("data-account-note-id");
+          if (action === "account-delete-note" && accountNoteId) deleteAccountNote(accountNoteId);
+          if (action === "account-qr-note" && accountNoteId) {
+            showQr(actionElement.getAttribute("data-code"), window.location.origin + "/s/" + actionElement.getAttribute("data-code"));
+          }
+          var accountFileId = actionElement.getAttribute("data-account-file-id");
+          if (action === "account-delete-file" && accountFileId) deleteAccountFile(accountFileId);
+          if (action === "account-qr-file" && accountFileId) {
+            showQr(actionElement.getAttribute("data-code"), window.location.origin + "/f/" + actionElement.getAttribute("data-code"));
+          }
+          if (action === "account-copy-note") {
+            copyText(window.location.origin + "/s/" + actionElement.getAttribute("data-code"), "Share link copied.");
+          }
+          if (action === "account-copy-file") {
+            copyText(window.location.origin + "/f/" + actionElement.getAttribute("data-code"), "Share link copied.");
+          }
         });
 
         [el.itemModal, el.fileModal, el.qrModal, el.scannerModal].forEach(function (modal) {
@@ -392,6 +635,7 @@ import "./style.css";
         var pin = el.sharePin.value.trim();
         var burnAfterRead = el.burnToggle.checked;
         var customCode = APP.allowCustomCode ? el.customCodeInput.value.trim() : "";
+        var ttlSeconds = el.createTtlSelect && el.createTtlSelect.value ? Number(el.createTtlSelect.value) : undefined;
 
         if (!title) return fieldError(el.shareTitle, "Add a title.");
         if (!text) return fieldError(el.shareText, "Add some text to share.");
@@ -407,25 +651,26 @@ import "./style.css";
             headers: { "content-type": "application/json" },
             body: JSON.stringify({
               title: title, text: text, locked: locked, pin: pin,
-              burnAfterRead: burnAfterRead, customCode: customCode
+              burnAfterRead: burnAfterRead, customCode: customCode, ttlSeconds: ttlSeconds
             })
           });
 
           saveDeleteToken(response.item.id, response.deleteToken);
           upsertLocalItem(response.item, true);
           renderLocalItems();
-          el.lastRefreshed.textContent = "Added just now";
+          if (el.lastRefreshed) el.lastRefreshed.textContent = "Added just now";
           resetCreateForm();
           showQr(response.item.code, response.shareUrl);
           toast("Note created instantly. It expires in " + formatDuration(APP.ttlSeconds) + ".", "success");
         } catch (error) {
           toast(error.message || "Unable to create share.", "error");
         } finally {
-          setButtonLoading(el.createSubmit, false, APP.createButtonText);
+          setButtonLoading(el.createSubmit, false, COPY.createButtonText);
         }
       }
 
       async function loadLocalItems(showFeedback) {
+        if (!el.boardList || !el.refreshButton) return;
         if (el.refreshButton.disabled) return;
         el.refreshButton.disabled = true;
         var icon = el.refreshButton.querySelector("[data-refresh-icon]");
@@ -447,6 +692,7 @@ import "./style.css";
       }
 
       function renderLocalItems() {
+        if (!el.boardList) return;
         var now = Date.now();
         state.items = state.items.filter(function (item) { return Number(item.expiresAt) > now; });
         var query = String(el.notesSearch.value || "").trim().toLowerCase();
@@ -471,7 +717,7 @@ import "./style.css";
           el.boardList.classList.add("hidden");
           el.boardEmpty.classList.remove("hidden");
           var emptyText = el.boardEmpty.querySelector("p");
-          if (emptyText) emptyText.textContent = state.items.length ? "No notes match this view." : APP.availableEmptyText;
+          if (emptyText) emptyText.textContent = state.items.length ? "No notes match this view." : COPY.availableEmptyText;
           return;
         }
 
@@ -495,7 +741,7 @@ import "./style.css";
           lockBadge.textContent = item.locked ? "PIN locked" : "Open";
           meta.appendChild(sourceBadge);
           meta.appendChild(lockBadge);
-          var sharedByBadge = buildSharedByBadge(item.sharedBy);
+          var sharedByBadge = buildSharedByBadge(item.sharedBy, card);
           if (sharedByBadge) meta.appendChild(sharedByBadge);
 
           var title = document.createElement("h3");
@@ -527,7 +773,7 @@ import "./style.css";
           qrButton.setAttribute("data-item-id", item.id);
           qrButton.className = "icon-button";
           qrButton.setAttribute("aria-label", "Show share code and QR");
-          qrButton.innerHTML = '<svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 7h.01M17 7h.01M7 17h.01"/><path d="M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h2v2h-2zM18 14h2v6h-2zM14 18h2v2h-2z"/></svg>';
+          qrButton.innerHTML = '<svg viewBox="0 0 24 24" class="h-4 w-4"><use href="#i-qr-grid"></use></svg>';
 
           actions.appendChild(openButton);
           actions.appendChild(qrButton);
@@ -629,7 +875,7 @@ import "./style.css";
               addedAt: Date.now()
             }), true);
             renderLocalItems();
-            el.lastRefreshed.textContent = "Added just now";
+            if (el.lastRefreshed) el.lastRefreshed.textContent = "Added just now";
           }
         } else {
           el.modalContent.classList.add("hidden");
@@ -808,6 +1054,9 @@ import "./style.css";
         if (APP.allowCustomCode && el.fileCustomCodeInput.value.trim()) {
           form.append("customCode", el.fileCustomCodeInput.value.trim());
         }
+        if (el.fileTtlSelect && el.fileTtlSelect.value) {
+          form.append("ttlSeconds", el.fileTtlSelect.value);
+        }
 
         setButtonLoading(el.fileUploadSubmit, true, "Uploading…");
         try {
@@ -821,7 +1070,7 @@ import "./style.css";
         } catch (error) {
           toast(error.message || "Unable to upload the file.", "error");
         } finally {
-          setButtonLoading(el.fileUploadSubmit, false, APP.filesUploadButtonText || "Upload file");
+          setButtonLoading(el.fileUploadSubmit, false, COPY.filesUploadButtonText || "Upload file");
         }
       }
 
@@ -927,7 +1176,7 @@ import "./style.css";
           meta.appendChild(sourceBadge);
           meta.appendChild(lockBadge);
           meta.appendChild(sizeBadge);
-          var sharedByBadge = buildSharedByBadge(item.sharedBy);
+          var sharedByBadge = buildSharedByBadge(item.sharedBy, card);
           if (sharedByBadge) meta.appendChild(sharedByBadge);
 
           var title = document.createElement("h3");
@@ -959,7 +1208,7 @@ import "./style.css";
           qrButton.setAttribute("data-file-id", item.id);
           qrButton.className = "icon-button";
           qrButton.setAttribute("aria-label", "Show share code and QR");
-          qrButton.innerHTML = '<svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 7h.01M17 7h.01M7 17h.01"/><path d="M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h2v2h-2zM18 14h2v6h-2zM14 18h2v2h-2z"/></svg>';
+          qrButton.innerHTML = '<svg viewBox="0 0 24 24" class="h-4 w-4"><use href="#i-qr-grid"></use></svg>';
 
           actions.appendChild(openButton);
           actions.appendChild(qrButton);
@@ -1362,17 +1611,13 @@ import "./style.css";
       }
 
       function applyPublicSettings() {
-        var disabled = APP.maintenanceMode || !APP.notesEnabled || !APP.createSectionEnabled;
+        var disabled = APP.maintenanceMode || !APP.notesEnabled;
+        // Tier 1/2 admin-editable settings live on APP (boot data); the
+        // ~90 static micro-copy keys deleted from DEFAULT_SETTINGS
+        // (V3-PLAN.md section 2) live in copy.js. No key names overlap
+        // between the two, so a merge is a safe single lookup source.
+        var textSource = Object.assign({}, COPY, APP);
         var textMap = {
-          "header-create-text": "headerCreateText",
-          "header-available-text": "headerAvailableText",
-          "header-open-code-text": "headerOpenCodeText",
-          "header-guide-text": "headerGuideText",
-          "header-feedback-text": "headerFeedbackText",
-          "header-about-text": "headerAboutText",
-          "header-new-note-text": "headerNewNoteText",
-          "drawer-create-text": "drawerCreateText",
-          "drawer-open-code-text": "drawerOpenCodeText",
           "drawer-scan-text": "drawerScanText",
           "announcement-label": "announcementLabel",
           "announcement-text": "announcement",
@@ -1433,13 +1678,10 @@ import "./style.css";
           "footer-developer-name": "developerName",
           "privacy-text": "privacyText",
           "network-mode-text": "privacyText",
-          "admin-link-text": "adminLinkText",
           "maintenance-eyebrow": "maintenanceEyebrow",
           "maintenance-title": "maintenanceTitle",
           "maintenance-message": "maintenanceMessage",
           "maintenance-button": "maintenanceButtonText",
-          "header-files-text": "headerFilesText",
-          "header-qrtool-text": "headerQrToolText",
           "files-section-title": "filesSectionTitle",
           "files-temporary-badge": "filesTemporaryBadge",
           "files-privacy-note": "filesPrivacyNote",
@@ -1454,113 +1696,122 @@ import "./style.css";
           "qrtool-download-text": "qrLinkToolDownloadText"
         };
         Object.keys(textMap).forEach(function (id) {
-          setNodeText(id, APP[textMap[id]]);
+          setNodeText(id, textSource[textMap[id]]);
         });
 
-        document.querySelectorAll('[data-ticker-item="1"]').forEach(function (node) { node.textContent = APP.tickerItem1; });
-        document.querySelectorAll('[data-ticker-item="2"]').forEach(function (node) { node.textContent = APP.tickerItem2; });
-        document.querySelectorAll('[data-ticker-item="3"]').forEach(function (node) { node.textContent = APP.tickerItem3; });
-        document.querySelectorAll('[data-ticker-item="4"]').forEach(function (node) { node.textContent = APP.tickerItem4; });
+        document.querySelectorAll('[data-ticker-item="1"]').forEach(function (node) { node.textContent = COPY.tickerItem1; });
+        document.querySelectorAll('[data-ticker-item="2"]').forEach(function (node) { node.textContent = COPY.tickerItem2; });
+        document.querySelectorAll('[data-ticker-item="3"]').forEach(function (node) { node.textContent = COPY.tickerItem3; });
+        document.querySelectorAll('[data-ticker-item="4"]').forEach(function (node) { node.textContent = COPY.tickerItem4; });
 
-        el.shareTitle.placeholder = APP.createTitlePlaceholder;
-        el.shareText.placeholder = APP.createTextPlaceholder;
-        el.notesSearch.placeholder = APP.availableSearchPlaceholder;
-        el.joinCode.placeholder = APP.openCodePlaceholder;
-        el.feedbackMessage.placeholder = APP.feedbackMessagePlaceholder;
-        el.feedbackEmail.placeholder = APP.feedbackEmailPlaceholder;
-        el.fileTitle.placeholder = APP.filesUploadPlaceholder;
-        el.qrtoolInput.placeholder = APP.qrLinkToolPlaceholder;
-        var createLabel = el.createSubmit.querySelector("[data-button-label]");
-        if (createLabel) createLabel.textContent = APP.createButtonText;
-        el.feedbackSubmit.textContent = APP.feedbackButtonText;
-        el.createExpiryCopy.textContent = String(APP.createSectionSubtitle || "")
-          .replace("{duration}", formatDuration(APP.ttlSeconds));
+        setPlaceholder(el.shareTitle, COPY.createTitlePlaceholder);
+        setPlaceholder(el.shareText, COPY.createTextPlaceholder);
+        setPlaceholder(el.notesSearch, COPY.availableSearchPlaceholder);
+        setPlaceholder(el.joinCode, COPY.openCodePlaceholder);
+        setPlaceholder(el.feedbackMessage, COPY.feedbackMessagePlaceholder);
+        setPlaceholder(el.feedbackEmail, COPY.feedbackEmailPlaceholder);
+        setPlaceholder(el.fileTitle, COPY.filesUploadPlaceholder);
+        setPlaceholder(el.qrtoolInput, COPY.qrLinkToolPlaceholder);
+        var createLabel = el.createSubmit && el.createSubmit.querySelector("[data-button-label]");
+        if (createLabel) createLabel.textContent = COPY.createButtonText;
+        if (el.feedbackSubmit) el.feedbackSubmit.textContent = COPY.feedbackButtonText;
+        if (el.createExpiryCopy) {
+          el.createExpiryCopy.textContent = String(COPY.createSectionSubtitle || "")
+            .replace("{duration}", formatDuration(APP.ttlSeconds));
+        }
         var filesSubtitle = document.getElementById("files-section-subtitle");
         if (filesSubtitle) {
-          filesSubtitle.textContent = String(APP.filesSectionSubtitle || "")
+          filesSubtitle.textContent = String(COPY.filesSectionSubtitle || "")
             .replace("{duration}", formatDuration(APP.fileTtlSeconds || APP.ttlSeconds));
         }
         var filesDropHint = document.getElementById("files-drop-hint");
         if (filesDropHint) {
-          filesDropHint.textContent = (APP.filesDropHint || "Drag and drop a file here, or click to choose one.")
+          filesDropHint.textContent = (COPY.filesDropHint || "Drag and drop a file here, or click to choose one.")
             + " (max " + (APP.maxFileSizeMB || 25) + "MB)";
         }
 
+        // The 12 section-visibility toggles (heroEnabled, heroPanelEnabled,
+        // tickerEnabled, createSectionEnabled, availableSectionEnabled,
+        // openCodeSectionEnabled, guideEnabled, aboutEnabled, footerEnabled,
+        // socialLinksEnabled, footerShowYear, footerShowDeveloper) were
+        // deleted from DEFAULT_SETTINGS (V3-PLAN.md section 2) -- those
+        // sections are simply always on now. Only the still-live Tier 1
+        // feature flags keep their visibility gating below.
         setSectionVisibility("announcement-bar", APP.announcementEnabled);
-        setSectionVisibility("hero-section", APP.heroEnabled);
-        setSectionVisibility("hero-panel", APP.heroEnabled && APP.heroPanelEnabled);
-        setSectionVisibility("ticker-section", APP.tickerEnabled);
-        setSectionVisibility("create-card", APP.createSectionEnabled);
-        setSectionVisibility("create-privacy-note", APP.createSectionEnabled);
-        setSectionVisibility("notes-section", APP.availableSectionEnabled);
-        setSectionVisibility("join-card", APP.openCodeSectionEnabled);
         setSectionVisibility("files-card", APP.fileSharingEnabled);
-        setSectionVisibility("header-files-text", APP.fileSharingEnabled);
-        setSectionVisibility("qrtool-drawer-section", APP.qrLinkToolEnabled);
-        setSectionVisibility("header-qrtool-text", APP.qrLinkToolEnabled);
-        setSectionVisibility("guide-drawer-section", APP.guideEnabled);
+        setSectionVisibility("files-board-section", APP.fileSharingEnabled);
+        setSectionVisibility("nav-files-link", APP.fileSharingEnabled);
+        setSectionVisibility("nav-qr-link", APP.qrLinkToolEnabled);
+        setSectionVisibility("qrtool-page", APP.qrLinkToolEnabled);
         setSectionVisibility("feedback-drawer-section", APP.feedbackEnabled);
-        setSectionVisibility("about-drawer-section", APP.aboutEnabled);
-        setSectionVisibility("site-footer", APP.footerEnabled);
-        setSectionVisibility("header-guide-text", APP.guideEnabled);
-        setSectionVisibility("header-feedback-text", APP.feedbackEnabled);
-        setSectionVisibility("header-about-text", APP.aboutEnabled);
-        setSectionVisibility("header-create-text", APP.createSectionEnabled);
-        setSectionVisibility("header-available-text", APP.availableSectionEnabled);
-        setSectionVisibility("header-open-code-text", APP.openCodeSectionEnabled);
-        setSectionVisibility("header-new-note-text", APP.createSectionEnabled);
-        setSectionVisibility("hero-primary-button", APP.createSectionEnabled);
-        setSectionVisibility("hero-secondary-button", APP.openCodeSectionEnabled);
-        setSectionVisibility("drawer-create-text", APP.createSectionEnabled);
-        setSectionVisibility("drawer-open-code-text", APP.openCodeSectionEnabled);
-        setSectionVisibility("drawer-scan-text", APP.openCodeSectionEnabled);
-        setSectionVisibility("footer-create-text", APP.createSectionEnabled);
-        setSectionVisibility("footer-available-text", APP.availableSectionEnabled);
-        setSectionVisibility("footer-open-code-text", APP.openCodeSectionEnabled);
-        setSectionVisibility("footer-guide-text", APP.guideEnabled);
         setSectionVisibility("footer-feedback-text", APP.feedbackEnabled);
-        setSectionVisibility("footer-about-text", APP.aboutEnabled);
 
         renderSocialLinks();
-        var year = APP.footerShowYear ? new Date().getFullYear() + " " : "";
-        setNodeText("footer-copyright", "© " + year + APP.appName + ". " + APP.footerRightsText);
+        var year = new Date().getFullYear() + " ";
+        setNodeText("footer-copyright", "© " + year + APP.appName + ". " + COPY.footerRightsText);
         var developerLine = document.getElementById("footer-developer-line");
         if (developerLine) {
-          developerLine.classList.toggle("hidden", !APP.footerShowDeveloper);
-          developerLine.textContent = APP.footerDeveloperPrefix + " ";
+          developerLine.classList.remove("hidden");
+          developerLine.textContent = COPY.footerDeveloperPrefix + " ";
           var strong = document.createElement("strong");
           strong.textContent = APP.developerName;
           developerLine.appendChild(strong);
         }
 
-        el.maintenanceBanner.classList.toggle("hidden", !APP.maintenanceMode);
-        el.createSubmit.disabled = disabled;
-        el.createSubmit.setAttribute("aria-disabled", disabled ? "true" : "false");
-        if (disabled) {
-          if (createLabel) createLabel.textContent = "New notes disabled";
+        if (el.maintenanceBanner) el.maintenanceBanner.classList.toggle("hidden", !APP.maintenanceMode);
+        if (el.createSubmit) {
+          el.createSubmit.disabled = disabled;
+          el.createSubmit.setAttribute("aria-disabled", disabled ? "true" : "false");
+          if (disabled && createLabel) createLabel.textContent = "New notes disabled";
         }
         var filesDisabled = APP.maintenanceMode || !APP.fileSharingEnabled;
-        el.fileUploadSubmit.disabled = filesDisabled;
-        el.fileUploadSubmit.setAttribute("aria-disabled", filesDisabled ? "true" : "false");
-        var filesLabel = el.fileUploadSubmit.querySelector("[data-button-label]");
-        if (filesLabel) filesLabel.textContent = filesDisabled ? "File sharing disabled" : APP.filesUploadButtonText;
-        el.fileLockToggle && (el.fileLockToggle.closest("label").classList.toggle("hidden", !APP.pinEnabled));
-        if (!APP.pinEnabled) {
-          el.fileLockToggle.checked = false;
-          el.filePinFieldWrap.classList.add("hidden");
+        if (el.fileUploadSubmit) {
+          el.fileUploadSubmit.disabled = filesDisabled;
+          el.fileUploadSubmit.setAttribute("aria-disabled", filesDisabled ? "true" : "false");
+          var filesLabel = el.fileUploadSubmit.querySelector("[data-button-label]");
+          if (filesLabel) filesLabel.textContent = filesDisabled ? "File sharing disabled" : COPY.filesUploadButtonText;
         }
-        el.lockControl.classList.toggle("hidden", !APP.pinEnabled);
-        if (!APP.pinEnabled) {
-          el.lockToggle.checked = false;
-          el.pinFieldWrap.classList.add("hidden");
+        if (el.fileLockToggle) {
+          var fileLockLabel = el.fileLockToggle.closest("label");
+          if (fileLockLabel) fileLockLabel.classList.toggle("hidden", !APP.pinEnabled);
+          if (!APP.pinEnabled) {
+            el.fileLockToggle.checked = false;
+            if (el.filePinFieldWrap) el.filePinFieldWrap.classList.add("hidden");
+          }
         }
-        el.feedbackSection.classList.toggle("hidden", !APP.feedbackEnabled);
-        el.customCodeFieldWrap.classList.toggle("hidden", !APP.allowCustomCode);
-        el.fileCustomCodeFieldWrap.classList.toggle("hidden", !APP.allowCustomCode);
+        if (el.lockControl) {
+          el.lockControl.classList.toggle("hidden", !APP.pinEnabled);
+          if (!APP.pinEnabled) {
+            if (el.lockToggle) el.lockToggle.checked = false;
+            if (el.pinFieldWrap) el.pinFieldWrap.classList.add("hidden");
+          }
+        }
+        if (el.feedbackSection) el.feedbackSection.classList.toggle("hidden", !APP.feedbackEnabled);
+        if (el.customCodeFieldWrap) el.customCodeFieldWrap.classList.toggle("hidden", !APP.allowCustomCode);
+        if (el.fileCustomCodeFieldWrap) el.fileCustomCodeFieldWrap.classList.toggle("hidden", !APP.allowCustomCode);
         if (APP.maintenanceMode) {
-          document.getElementById("maintenance-modal").classList.remove("hidden-force");
-          lockBodyScroll();
+          var maintenanceModal = document.getElementById("maintenance-modal");
+          if (maintenanceModal) {
+            maintenanceModal.classList.remove("hidden-force");
+            lockBodyScroll();
+          }
         }
+
+        highlightActiveNav();
+      }
+
+      function setPlaceholder(node, value) {
+        if (node) node.placeholder = value == null ? "" : String(value);
+      }
+
+      function highlightActiveNav() {
+        var path = window.location.pathname;
+        document.querySelectorAll("[data-nav-path]").forEach(function (link) {
+          var active = link.getAttribute("data-nav-path") === path;
+          link.classList.toggle("text-white", active);
+          if (active) link.setAttribute("aria-current", "page");
+          else link.removeAttribute("aria-current");
+        });
       }
 
       function setNodeText(id, value) {
@@ -1582,7 +1833,7 @@ import "./style.css";
           ["GitHub", APP.socialGitHub],
           ["YouTube", APP.socialYouTube]
         ].filter(function (entry) { return safeExternalUrl(entry[1]); });
-        ["footer-social-links", "drawer-social-links"].forEach(function (id) {
+        ["footer-social-links", "about-social-links"].forEach(function (id) {
           var container = document.getElementById(id);
           if (!container) return;
           container.textContent = "";
@@ -1596,8 +1847,10 @@ import "./style.css";
             container.appendChild(link);
           });
         });
-        setSectionVisibility("footer-social-column", APP.socialLinksEnabled && entries.length > 0);
-        setSectionVisibility("drawer-social-links", APP.socialLinksEnabled && entries.length > 0);
+        // socialLinksEnabled was deleted -- social links now hide purely
+        // based on whether any URL is actually configured.
+        setSectionVisibility("footer-social-column", entries.length > 0);
+        setSectionVisibility("about-social-links", entries.length > 0);
 
         var contacts = document.getElementById("developer-contact-links");
         if (contacts) {
@@ -1692,7 +1945,478 @@ import "./style.css";
           toast(error.message || "Unable to submit feedback.", "error");
         } finally {
           el.feedbackSubmit.disabled = false;
-          el.feedbackSubmit.textContent = APP.feedbackButtonText;
+          el.feedbackSubmit.textContent = COPY.feedbackButtonText;
+        }
+      }
+
+      /** V3-PLAN 3.3/3.5/6: the mobile side-drawer mirrors the desktop nav's
+       *  signed-in state (avatar + tier badge + My Drops/Admin panel/Sign
+       *  out), since #drawer-auth-slot is rendered server-side as a plain
+       *  "Sign in ->" link on every page load (see SIDE_DRAWER in html.ts)
+       *  and has no per-request viewer data to key off of. */
+      function updateAccountLinkLabel() {
+        if (!el.drawerAuthSlot) return;
+        apiFetch("/api/auth/session").then(function (session) {
+          renderDrawerAuthSlot(session.authenticated ? session.user : null);
+        }).catch(function () {
+          renderDrawerAuthSlot(null);
+        });
+      }
+
+      function renderDrawerAuthSlot(user) {
+        el.drawerAuthSlot.textContent = "";
+        if (!user) {
+          var signIn = document.createElement("a");
+          signIn.href = "/login";
+          signIn.className = "inline-block text-violet-400";
+          signIn.textContent = "Sign in →";
+          el.drawerAuthSlot.appendChild(signIn);
+          return;
+        }
+
+        var head = document.createElement("div");
+        head.className = "flex items-center gap-3";
+        head.appendChild(buildTierAvatarEl(user.displayName, user.rank));
+        var info = document.createElement("div");
+        info.className = "min-w-0";
+        var name = document.createElement("p");
+        name.className = "truncate text-sm font-semibold text-white";
+        name.textContent = user.displayName;
+        var badge = document.createElement("span");
+        badge.className = "tier-badge " + tierBadgeClass(user.rank);
+        badge.textContent = tierBadgeIcon(user.rank) + " " + (user.roleName || "");
+        info.appendChild(name);
+        info.appendChild(badge);
+        head.appendChild(info);
+        el.drawerAuthSlot.appendChild(head);
+
+        var links = document.createElement("div");
+        links.className = "mt-3 grid gap-2 text-sm";
+        var myDrops = document.createElement("a");
+        myDrops.href = "/account";
+        myDrops.className = "text-violet-400";
+        myDrops.textContent = "My Drops →";
+        links.appendChild(myDrops);
+        if (user.rank === 0) {
+          var adminLink = document.createElement("a");
+          adminLink.href = "/admin";
+          adminLink.className = "text-violet-400";
+          adminLink.textContent = "Admin panel →";
+          links.appendChild(adminLink);
+        }
+        var signOut = document.createElement("button");
+        signOut.type = "button";
+        signOut.className = "text-left text-red-300";
+        signOut.setAttribute("data-action", "nav-sign-out");
+        signOut.textContent = "Sign out";
+        links.appendChild(signOut);
+        el.drawerAuthSlot.appendChild(links);
+      }
+
+      /* --- Tier avatar/badge helpers (V3-PLAN 3.3/3.5) --------------------
+       * Mirrors the identical hash/initials algorithm in src/html.ts's
+       * renderTierAvatar() so a given displayName renders the same color
+       * whether the avatar was server-rendered (desktop nav) or built here
+       * client-side (drawer, post-login /account dashboard swap). Rank 0 =
+       * Admin, 1 = Pro, 2 = Member (V3-PLAN 0.2 role rename). */
+      function hashHue(input) {
+        var hash = 0;
+        for (var i = 0; i < input.length; i++) {
+          hash = (Math.imul(hash, 31) + input.charCodeAt(i)) >>> 0;
+        }
+        return hash % 360;
+      }
+
+      function getInitials(name) {
+        var parts = String(name || "").trim().split(/\s+/).filter(Boolean);
+        if (parts.length === 0) return "?";
+        if (parts.length === 1) return parts[0].charAt(0).toUpperCase();
+        return (parts[0].charAt(0) + parts[parts.length - 1].charAt(0)).toUpperCase();
+      }
+
+      function tierRingClass(rank) {
+        if (rank === 0) return "tier-ring-admin";
+        if (rank === 1) return "tier-ring-pro";
+        return "tier-ring-member";
+      }
+
+      function tierBadgeClass(rank) {
+        if (rank === 0) return "tier-badge-admin";
+        if (rank === 1) return "tier-badge-pro";
+        return "tier-badge-member";
+      }
+
+      function tierBadgeIcon(rank) {
+        if (rank === 0) return "\u{1F451}";
+        if (rank === 1) return "★";
+        return "●";
+      }
+
+      function buildTierAvatarEl(displayName, rank) {
+        var span = document.createElement("span");
+        span.className = "tier-avatar " + tierRingClass(rank);
+        span.style.background = "hsl(" + hashHue(displayName || "?") + " 62% 42%)";
+        span.textContent = getInitials(displayName);
+        return span;
+      }
+
+      /** /login (V3 unified front door). Posts to the same any-rank
+       *  /api/auth/login endpoint /account uses, but redirects instead of
+       *  swapping in a dashboard in place: to /account normally, or shows
+       *  an "open the admin panel" hint when the signed-in account is
+       *  rank 0 (admin). */
+      async function submitLoginPage(event) {
+        event.preventDefault();
+        if (!el.loginEmail || !el.loginPassword) return;
+        var email = el.loginEmail.value.trim();
+        var password = el.loginPassword.value;
+        if (el.loginError) el.loginError.classList.add("hidden");
+        if (!email) return fieldError(el.loginEmail, "Enter your email.");
+        if (!password) return fieldError(el.loginPassword, "Enter your password.");
+
+        if (el.loginSubmit) {
+          el.loginSubmit.disabled = true;
+          el.loginSubmit.textContent = "Signing in…";
+        }
+        try {
+          await apiFetch("/api/auth/login", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ email: email, password: password })
+          });
+          var session = await apiFetch("/api/auth/session");
+          if (session.authenticated && session.user && session.user.rank === 0) {
+            if (el.loginAdminHint) el.loginAdminHint.classList.remove("hidden");
+            if (el.loginSubmit) el.loginSubmit.textContent = "Signed in";
+            toast("Signed in.", "success");
+          } else {
+            window.location.href = "/account";
+          }
+        } catch (error) {
+          if (el.loginError) {
+            el.loginError.textContent = error.message || "Incorrect email or password.";
+            el.loginError.classList.remove("hidden");
+          }
+          if (el.loginSubmit) {
+            el.loginSubmit.disabled = false;
+            el.loginSubmit.textContent = "Sign in";
+          }
+        }
+      }
+
+      async function signOutFromNav() {
+        try {
+          await apiFetch("/api/auth/logout", { method: "POST" });
+        } catch (error) {}
+        window.location.href = "/";
+      }
+
+      async function initAccount() {
+        try {
+          var session = await apiFetch("/api/auth/session");
+          if (session.authenticated) {
+            await showAccountDashboard(session.user);
+          } else {
+            el.accountEmail.focus();
+          }
+        } catch (error) {
+          toast(error.message || "Unable to check your session.", "error");
+        }
+      }
+
+      async function accountLogin(event) {
+        event.preventDefault();
+        var email = el.accountEmail.value.trim();
+        var password = el.accountPassword.value;
+        el.accountLoginError.classList.add("hidden");
+        if (!email) return fieldError(el.accountEmail, "Enter your email.");
+        if (!password) return fieldError(el.accountPassword, "Enter your password.");
+        el.accountLoginSubmit.disabled = true;
+        el.accountLoginSubmit.textContent = "Signing in…";
+        try {
+          await apiFetch("/api/auth/login", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ email: email, password: password })
+          });
+          el.accountPassword.value = "";
+          var session = await apiFetch("/api/auth/session");
+          await showAccountDashboard(session.user);
+          toast("Signed in.", "success");
+        } catch (error) {
+          el.accountLoginError.textContent = error.message || "Unable to sign in.";
+          el.accountLoginError.classList.remove("hidden");
+        } finally {
+          el.accountLoginSubmit.disabled = false;
+          el.accountLoginSubmit.textContent = "Sign in";
+        }
+      }
+
+      async function accountLogout() {
+        try {
+          await apiFetch("/api/auth/logout", { method: "POST" });
+        } catch (error) {}
+        el.accountDashboard.classList.add("hidden");
+        el.accountSigninCard.classList.remove("hidden");
+        if (el.accountBenefitsCard) el.accountBenefitsCard.classList.remove("hidden");
+        if (el.accountLogout) el.accountLogout.classList.add("hidden");
+        el.accountEmail.focus();
+        toast("Signed out.", "success");
+      }
+
+      async function showAccountDashboard(user) {
+        el.accountSigninCard.classList.add("hidden");
+        if (el.accountBenefitsCard) el.accountBenefitsCard.classList.add("hidden");
+        el.accountDashboard.classList.remove("hidden");
+        if (el.accountLogout) el.accountLogout.classList.remove("hidden");
+        el.accountDisplayName.textContent = user.displayName;
+        el.accountEmailDisplay.textContent = user.email;
+
+        if (el.accountAvatar) {
+          el.accountAvatar.className = "tier-avatar " + tierRingClass(user.rank);
+          el.accountAvatar.style.background = "hsl(" + hashHue(user.displayName || "?") + " 62% 42%)";
+          el.accountAvatar.textContent = getInitials(user.displayName);
+        }
+        el.accountRoleBadge.className = "tier-badge " + tierBadgeClass(user.rank);
+        el.accountRoleBadge.textContent = tierBadgeIcon(user.rank) + " " + (user.roleName || "");
+
+        // Plan limits in plain English (V3-PLAN.md section 6) -- no more
+        // raw EffectiveLimits key dump.
+        el.accountLimitsGrid.textContent = "";
+        var lines = [
+          "Notes disappear after " + formatDuration(APP.ttlSeconds) + ".",
+          "Up to " + Number(APP.maxTextLength).toLocaleString() + " characters per note.",
+          "Files up to " + APP.maxFileSizeMB + " MB.",
+          "Up to " + APP.maxFilesPerBatch + " files per upload, " + APP.maxBatchTotalMB + " MB total.",
+          "Files disappear after " + formatDuration(APP.fileTtlSeconds) + ".",
+          "Choose your own link: " + (APP.allowCustomCode ? "Yes" : "No") + ".",
+          "Extra encryption: " + (APP.allowClientEncryption ? "Yes" : "No") + "."
+        ];
+        lines.forEach(function (line) {
+          var row = document.createElement("p");
+          row.className = "leading-6";
+          row.textContent = line;
+          el.accountLimitsGrid.appendChild(row);
+        });
+
+        await loadAccountShares();
+      }
+
+      async function loadAccountShares() {
+        try {
+          var data = await apiFetch("/api/me/shares");
+          renderAccountNotes(data.notes || []);
+          renderAccountFiles(data.files || []);
+        } catch (error) {
+          toast(error.message || "Unable to load your shares.", "error");
+        }
+      }
+
+      function renderAccountNotes(notes) {
+        el.accountNotesList.textContent = "";
+        if (!notes.length) {
+          var empty = document.createElement("p");
+          empty.className = "text-sm text-slate-500";
+          empty.textContent = "No notes yet.";
+          el.accountNotesList.appendChild(empty);
+          return;
+        }
+        notes.forEach(function (note) {
+          var row = document.createElement("article");
+          row.className = "note-row";
+          var titleWrap = document.createElement("div");
+          titleWrap.className = "note-main";
+          var meta = document.createElement("div");
+          meta.className = "note-meta";
+          var lockBadge = document.createElement("span");
+          lockBadge.className = "note-badge";
+          lockBadge.textContent = note.locked ? "PIN locked" : "Open";
+          meta.appendChild(lockBadge);
+          var title = document.createElement("h3");
+          title.className = "note-title";
+          title.textContent = note.title;
+          var expiry = document.createElement("span");
+          expiry.className = "note-expiry";
+          expiry.textContent = formatRemaining(note.expiresAt);
+          titleWrap.appendChild(meta);
+          titleWrap.appendChild(title);
+          titleWrap.appendChild(expiry);
+
+          var actions = document.createElement("div");
+          actions.className = "note-actions";
+          var copyButton = document.createElement("button");
+          copyButton.type = "button";
+          copyButton.className = "rounded-md border border-[var(--line)] px-3 py-1.5 text-xs";
+          copyButton.setAttribute("data-action", "account-copy-note");
+          copyButton.setAttribute("data-code", note.code);
+          copyButton.textContent = "Copy link";
+          var qrButton = document.createElement("button");
+          qrButton.type = "button";
+          qrButton.className = "icon-button";
+          qrButton.setAttribute("data-action", "account-qr-note");
+          qrButton.setAttribute("data-account-note-id", note.id);
+          qrButton.setAttribute("data-code", note.code);
+          qrButton.setAttribute("aria-label", "Show share code and QR");
+          qrButton.innerHTML = '<svg viewBox="0 0 24 24" class="h-4 w-4"><use href="#i-qr-grid"></use></svg>';
+          var deleteButton = document.createElement("button");
+          deleteButton.type = "button";
+          deleteButton.className = "rounded-md border border-red-500/30 px-3 py-1.5 text-xs text-red-300";
+          deleteButton.setAttribute("data-action", "account-delete-note");
+          deleteButton.setAttribute("data-account-note-id", note.id);
+          deleteButton.textContent = "Delete";
+          actions.appendChild(copyButton);
+          actions.appendChild(qrButton);
+          actions.appendChild(deleteButton);
+          row.appendChild(titleWrap);
+          row.appendChild(actions);
+          el.accountNotesList.appendChild(row);
+        });
+      }
+
+      function renderAccountFiles(files) {
+        el.accountFilesList.textContent = "";
+        if (!files.length) {
+          var empty = document.createElement("p");
+          empty.className = "text-sm text-slate-500";
+          empty.textContent = "No files yet.";
+          el.accountFilesList.appendChild(empty);
+          return;
+        }
+        files.forEach(function (group) {
+          var row = document.createElement("article");
+          row.className = "note-row";
+          var titleWrap = document.createElement("div");
+          titleWrap.className = "note-main";
+          var meta = document.createElement("div");
+          meta.className = "note-meta";
+          var lockBadge = document.createElement("span");
+          lockBadge.className = "note-badge";
+          lockBadge.textContent = group.locked ? "PIN locked" : "Open";
+          meta.appendChild(lockBadge);
+          var countBadge = document.createElement("span");
+          countBadge.className = "note-badge";
+          countBadge.textContent = group.fileCount + (group.fileCount === 1 ? " file" : " files") + " · " + formatBytes(group.totalSizeBytes);
+          meta.appendChild(countBadge);
+          var title = document.createElement("h3");
+          title.className = "note-title";
+          title.textContent = group.title;
+          var expiry = document.createElement("span");
+          expiry.className = "note-expiry";
+          expiry.textContent = formatRemaining(group.expiresAt);
+          titleWrap.appendChild(meta);
+          titleWrap.appendChild(title);
+          titleWrap.appendChild(expiry);
+
+          var actions = document.createElement("div");
+          actions.className = "note-actions";
+          var copyButton = document.createElement("button");
+          copyButton.type = "button";
+          copyButton.className = "rounded-md border border-[var(--line)] px-3 py-1.5 text-xs";
+          copyButton.setAttribute("data-action", "account-copy-file");
+          copyButton.setAttribute("data-code", group.code);
+          copyButton.textContent = "Copy link";
+          var qrButton = document.createElement("button");
+          qrButton.type = "button";
+          qrButton.className = "icon-button";
+          qrButton.setAttribute("data-action", "account-qr-file");
+          qrButton.setAttribute("data-account-file-id", group.id);
+          qrButton.setAttribute("data-code", group.code);
+          qrButton.setAttribute("aria-label", "Show share code and QR");
+          qrButton.innerHTML = '<svg viewBox="0 0 24 24" class="h-4 w-4"><use href="#i-qr-grid"></use></svg>';
+          var deleteButton = document.createElement("button");
+          deleteButton.type = "button";
+          deleteButton.className = "rounded-md border border-red-500/30 px-3 py-1.5 text-xs text-red-300";
+          deleteButton.setAttribute("data-action", "account-delete-file");
+          deleteButton.setAttribute("data-account-file-id", group.id);
+          deleteButton.textContent = "Delete";
+          actions.appendChild(copyButton);
+          actions.appendChild(qrButton);
+          actions.appendChild(deleteButton);
+          row.appendChild(titleWrap);
+          row.appendChild(actions);
+          el.accountFilesList.appendChild(row);
+        });
+      }
+
+      async function deleteAccountNote(noteId) {
+        try {
+          await apiFetch("/api/me/shares/notes/" + encodeURIComponent(noteId), { method: "DELETE" });
+          toast("Note deleted.", "success");
+          await loadAccountShares();
+        } catch (error) {
+          toast(error.message || "Unable to delete note.", "error");
+        }
+      }
+
+      async function deleteAccountFile(groupId) {
+        try {
+          await apiFetch("/api/me/shares/files/" + encodeURIComponent(groupId), { method: "DELETE" });
+          toast("File deleted.", "success");
+          await loadAccountShares();
+        } catch (error) {
+          toast(error.message || "Unable to delete file.", "error");
+        }
+      }
+
+      async function submitAccountRequest(event) {
+        event.preventDefault();
+        var name = el.accountRequestName.value.trim();
+        var email = el.accountRequestEmail.value.trim();
+        var reason = el.accountRequestReason.value.trim();
+        el.accountRequestStatus.classList.add("hidden");
+        if (!name) return fieldError(el.accountRequestName, "Add your name.");
+        if (!email) return fieldError(el.accountRequestEmail, "Add your email.");
+        if (!reason) return fieldError(el.accountRequestReason, "Tell us why you need an account.");
+        el.accountRequestSubmit.disabled = true;
+        el.accountRequestSubmit.textContent = "Submitting…";
+        try {
+          await apiFetch("/api/feedback", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({
+              category: "account_request",
+              email: email,
+              message: "Name: " + name + "\n\n" + reason
+            })
+          });
+          el.accountRequestForm.reset();
+          el.accountRequestStatus.textContent = "Request submitted. The admin will review it.";
+          el.accountRequestStatus.classList.remove("hidden");
+          toast("Account request submitted.", "success");
+        } catch (error) {
+          toast(error.message || "Unable to submit request.", "error");
+        } finally {
+          el.accountRequestSubmit.disabled = false;
+          el.accountRequestSubmit.textContent = "Request an account";
+        }
+      }
+
+      async function changeAccountPassword(event) {
+        event.preventDefault();
+        var currentPassword = el.accountCurrentPassword.value;
+        var newPassword = el.accountNewPassword.value;
+        var confirmPassword = el.accountConfirmPassword.value;
+        el.accountPasswordStatus.classList.add("hidden");
+        if (!currentPassword) return fieldError(el.accountCurrentPassword, "Enter your current password.");
+        if (newPassword.length < 8) return fieldError(el.accountNewPassword, "New password must be at least 8 characters.");
+        if (newPassword !== confirmPassword) return fieldError(el.accountConfirmPassword, "Passwords do not match.");
+        el.accountPasswordSubmit.disabled = true;
+        el.accountPasswordSubmit.textContent = "Updating…";
+        try {
+          await apiFetch("/api/me/password", {
+            method: "PATCH",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ currentPassword: currentPassword, newPassword: newPassword })
+          });
+          el.accountPasswordForm.reset();
+          el.accountPasswordStatus.textContent = "Password updated.";
+          el.accountPasswordStatus.classList.remove("hidden");
+          toast("Password updated.", "success");
+        } catch (error) {
+          toast(error.message || "Unable to update password.", "error");
+        } finally {
+          el.accountPasswordSubmit.disabled = false;
+          el.accountPasswordSubmit.textContent = "Update password";
         }
       }
 
@@ -1708,7 +2432,7 @@ import "./style.css";
           }
           if (session.authenticated) {
             showAdminDashboard();
-            await loadAdminDashboard();
+            await loadAdminOverview();
           } else {
             el.adminPassword.focus();
           }
@@ -1733,7 +2457,7 @@ import "./style.css";
           });
           el.adminPassword.value = "";
           showAdminDashboard();
-          await loadAdminDashboard();
+          await loadAdminOverview();
           toast("Signed in.", "success");
         } catch (error) {
           toast(error.message || "Unable to sign in.", "error");
@@ -1748,22 +2472,23 @@ import "./style.css";
         try {
           await apiFetch("/api/admin/logout", { method: "POST" });
         } catch (error) {}
-        state.adminData = null;
         el.adminDashboard.classList.add("hidden");
         el.adminLoginCard.classList.remove("hidden");
-        el.adminLogout.classList.add("hidden");
+        if (el.adminLoginHeader) el.adminLoginHeader.classList.remove("hidden-force");
         el.adminPassword.focus();
         toast("Signed out.", "success");
       }
 
       function showAdminDashboard() {
         el.adminLoginCard.classList.add("hidden");
+        if (el.adminLoginHeader) el.adminLoginHeader.classList.add("hidden-force");
         el.adminDashboard.classList.remove("hidden");
-        el.adminLogout.classList.remove("hidden");
         switchAdminTab("overview");
       }
 
       function switchAdminTab(tabName) {
+        state.admin.activeTab = tabName;
+        if (el.adminSearch) el.adminSearch.value = "";
         el.adminTabs.forEach(function (tab) {
           var active = tab.getAttribute("data-admin-tab") === tabName;
           tab.classList.toggle("active", active);
@@ -1774,132 +2499,521 @@ import "./style.css";
         });
       }
 
-      async function loadAdminDashboard() {
-        el.adminRefresh.disabled = true;
-        el.adminRefresh.textContent = "Refreshing…";
+      /** Dispatches to the right loader when a sidebar tab is opened. Each
+       *  tab's data is fetched lazily (Phase 8's split endpoints are cheap,
+       *  targeted queries -- there's no longer one big /dashboard payload to
+       *  share), and re-fetched every time the tab is revisited so admins
+       *  always see current data without a manual refresh. */
+      function loadAdminTabData(name) {
+        if (name === "overview") loadAdminOverview();
+        else if (name === "drops") loadAdminDrops();
+        else if (name === "users") loadAdminUsersPage();
+        else if (name === "inbox") loadAdminInbox();
+        else if (name === "settings") loadAdminSettingsTab();
+      }
+
+      /** Dispatches the topbar search box to whichever tab is currently open.
+       *  Overview/Settings have nothing to search; Inbox's endpoint has no
+       *  free-text q param (status/category only), so it's a no-op there too. */
+      function handleAdminTopSearch(value) {
+        if (state.admin.activeTab === "drops") {
+          if (el.adminDropsSearch) el.adminDropsSearch.value = value;
+          state.admin.drops.q = value;
+          state.admin.drops.page = 1;
+          loadAdminDrops();
+        } else if (state.admin.activeTab === "users") {
+          if (el.adminUsersSearch) el.adminUsersSearch.value = value;
+          state.admin.users.q = value;
+          state.admin.users.page = 1;
+          loadAdminUsersPage();
+        }
+      }
+
+      /* ------------------------------------------------------------ */
+      /* Overview -- GET /api/admin/overview + GET /api/admin/audit    */
+      /* ------------------------------------------------------------ */
+
+      async function loadAdminOverview() {
+        if (el.adminRefresh) { el.adminRefresh.disabled = true; el.adminRefresh.textContent = "Refreshing…"; }
         try {
-          var data = await adminFetch("/api/admin/dashboard");
-          state.adminData = data;
-          renderAdminDashboard(data);
+          var data = await adminFetch("/api/admin/overview");
+          await ensureActorLookupLoaded();
+          var auditData = await adminFetch("/api/admin/audit?page=1&pageSize=20").catch(function () { return { items: [] }; });
+          renderAdminOverview(data, auditData.items || []);
+          if (el.adminHealthD1) el.adminHealthD1.classList.add("ok");
+          if (el.adminHealthR2) {
+            el.adminHealthR2.classList.toggle("ok", Boolean(data.storage && data.storage.filesBucketConfigured));
+            el.adminHealthR2.classList.toggle("down", !(data.storage && data.storage.filesBucketConfigured));
+          }
+          updateInboxBadge(data.needsAttention || {});
         } catch (error) {
           if (error.status === 401) {
             el.adminDashboard.classList.add("hidden");
             el.adminLoginCard.classList.remove("hidden");
-            el.adminLogout.classList.add("hidden");
+            if (el.adminLoginHeader) el.adminLoginHeader.classList.remove("hidden-force");
           }
-          toast(error.message || "Unable to load dashboard.", "error");
+          if (el.adminHealthD1) el.adminHealthD1.classList.add("down");
+          toast(error.message || "Unable to load the overview.", "error");
         } finally {
-          el.adminRefresh.disabled = false;
-          el.adminRefresh.textContent = "Refresh data";
+          if (el.adminRefresh) { el.adminRefresh.disabled = false; el.adminRefresh.textContent = "Refresh"; }
         }
       }
 
-      function renderAdminDashboard(data) {
-        if (el.adminStorageStatus) {
-          el.adminStorageStatus.textContent = data.storage && data.storage.primary === "D1"
-            ? "D1 primary storage · 0 routine KV writes"
-            : "Storage status unavailable";
-        }
-        renderAdminStats(data.stats || {});
-        renderAdminChart(data.chart || []);
-        renderAdminEventCounts(data.eventCounts || {});
-        renderAdminNotes(data.notes || []);
-        renderAdminFeedback(data.feedback || []);
-        renderAdminFiles(data.files || [], data.storage || {});
-        fillAdminSettings(data.settings || {});
+      function updateInboxBadge(needsAttention) {
+        if (!el.adminInboxBadge) return;
+        var count = Number(needsAttention.newFeedbackCount || 0) + Number(needsAttention.pendingAccountRequests || 0);
+        el.adminInboxBadge.textContent = String(count);
+        el.adminInboxBadge.classList.toggle("hidden", count === 0);
       }
 
-      function renderAdminStats(stats) {
+      function trendDelta(trend) {
+        var pct = Number((trend && trend.deltaPercent) || 0);
+        if (pct > 0) return { text: "▲ " + pct + "%", cls: "up" };
+        if (pct < 0) return { text: "▼ " + Math.abs(pct) + "%", cls: "down" };
+        return { text: "No change", cls: "flat" };
+      }
+
+      function renderAdminOverview(data, auditItems) {
+        var stats = data.stats || {};
+        var trends = data.trends || {};
+        var attention = data.needsAttention || {};
+
         var cards = [
-          ["Active notes", stats.activeNotes || 0],
-          ["Created notes", stats.createdNotes || 0],
-          ["Note opens", stats.noteOpens || 0],
-          ["Unique networks", stats.uniqueNetworks || 0],
-          ["Received opens", stats.receivedOpens || 0],
-          ["New feedback", stats.feedbackNew || 0],
-          ["Total feedback", stats.feedbackTotal || 0],
-          ["Failed PINs", stats.pinFailures || 0]
+          ["Notes created", trends.notesCreated],
+          ["Files created", trends.filesCreated],
+          ["Feedback received", trends.feedbackReceived]
         ];
-        el.adminStats.textContent = "";
+        el.adminKpis.textContent = "";
         cards.forEach(function (card) {
+          var trend = card[1] || { current: 0, prior: 0, deltaPercent: 0 };
+          var delta = trendDelta(trend);
           var node = document.createElement("article");
           node.className = "stat-card";
           var label = document.createElement("p");
           label.className = "text-xs font-semibold uppercase tracking-wider text-slate-500";
-          label.textContent = card[0];
+          label.textContent = card[0] + " (7d)";
           var value = document.createElement("p");
           value.className = "stat-value";
-          value.textContent = Number(card[1]).toLocaleString();
+          value.textContent = Number(trend.current || 0).toLocaleString();
+          var trendLine = document.createElement("p");
+          trendLine.className = "stat-trend " + delta.cls;
+          trendLine.textContent = delta.text + " vs prior 7d";
           node.appendChild(label);
           node.appendChild(value);
-          el.adminStats.appendChild(node);
+          node.appendChild(trendLine);
+          el.adminKpis.appendChild(node);
         });
+        var activeNode = document.createElement("article");
+        activeNode.className = "stat-card";
+        var activeLabel = document.createElement("p");
+        activeLabel.className = "text-xs font-semibold uppercase tracking-wider text-slate-500";
+        activeLabel.textContent = "Active drops";
+        var activeValue = document.createElement("p");
+        activeValue.className = "stat-value";
+        activeValue.textContent = (Number(stats.activeNotes || 0) + Number(stats.activeFiles || 0)).toLocaleString();
+        var activeCaption = document.createElement("p");
+        activeCaption.className = "stat-trend flat";
+        activeCaption.textContent = "Right now";
+        activeNode.appendChild(activeLabel);
+        activeNode.appendChild(activeValue);
+        activeNode.appendChild(activeCaption);
+        el.adminKpis.appendChild(activeNode);
+
+        el.adminAttention.textContent = "";
+        var attentionRows = [
+          ["New feedback", attention.newFeedbackCount || 0, "inbox", "feedback", false],
+          ["Pending account requests", attention.pendingAccountRequests || 0, "inbox", "requests", false],
+          ["Storage used", (attention.storagePercentUsed || 0) + "%", "drops", null, (attention.storagePercentUsed || 0) > 80],
+          ["Failed logins (24h)", attention.recentFailedLogins || 0, null, null, Number(attention.recentFailedLogins || 0) > 0]
+        ];
+        attentionRows.forEach(function (row) {
+          var wrap = document.createElement("div");
+          wrap.className = "attention-row";
+          var label = document.createElement("span");
+          label.textContent = row[0];
+          var value = document.createElement("span");
+          value.className = "attention-value" + (row[4] ? " warn" : "");
+          value.textContent = String(row[1]);
+          wrap.appendChild(label);
+          if (row[2]) {
+            var link = document.createElement("button");
+            link.type = "button";
+            link.className = "rounded-md border-0 bg-transparent p-0 text-xs";
+            link.setAttribute("data-action", "admin-goto-tab");
+            link.setAttribute("data-admin-goto", row[2]);
+            if (row[3]) link.setAttribute("data-inbox-goto", row[3]);
+            link.appendChild(value);
+            wrap.appendChild(link);
+          } else {
+            wrap.appendChild(value);
+          }
+          el.adminAttention.appendChild(wrap);
+        });
+
+        el.adminTrendChart.textContent = "";
+        [["Notes created", trends.notesCreated], ["Files created", trends.filesCreated], ["Feedback received", trends.feedbackReceived]]
+          .forEach(function (pair) {
+            var trend = pair[1] || { current: 0, prior: 0 };
+            var maximum = Math.max(1, Number(trend.current || 0), Number(trend.prior || 0));
+            var row = document.createElement("div");
+            row.className = "trend-bar-row";
+            var label = document.createElement("p");
+            label.className = "text-xs text-slate-500";
+            label.textContent = pair[0] + " — this week " + Number(trend.current || 0) + ", last week " + Number(trend.prior || 0);
+            var track1 = document.createElement("div");
+            track1.className = "trend-bar-track";
+            var fill1 = document.createElement("div");
+            fill1.className = "trend-bar-fill";
+            fill1.style.width = Math.round((Number(trend.current || 0) / maximum) * 100) + "%";
+            track1.appendChild(fill1);
+            var track2 = document.createElement("div");
+            track2.className = "trend-bar-track";
+            var fill2 = document.createElement("div");
+            fill2.className = "trend-bar-fill prior";
+            fill2.style.width = Math.round((Number(trend.prior || 0) / maximum) * 100) + "%";
+            track2.appendChild(fill2);
+            row.appendChild(label);
+            row.appendChild(track1);
+            row.appendChild(track2);
+            el.adminTrendChart.appendChild(row);
+          });
+
+        renderAdminActivityFeed(auditItems);
       }
 
-      function renderAdminChart(chart) {
-        el.adminChart.textContent = "";
-        var maximum = Math.max.apply(Math, chart.map(function (entry) { return Number(entry.count || 0); }).concat([1]));
-        chart.forEach(function (entry) {
-          var column = document.createElement("div");
-          column.className = "bar-column";
-          var count = document.createElement("strong");
-          count.textContent = String(entry.count || 0);
-          var fill = document.createElement("span");
-          fill.className = "bar-fill";
-          fill.style.height = Math.max(4, Math.round((Number(entry.count || 0) / maximum) * 135)) + "px";
-          var date = document.createElement("span");
-          date.textContent = new Date(entry.date + "T00:00:00").toLocaleDateString([], { weekday: "short" });
-          column.appendChild(count);
-          column.appendChild(fill);
-          column.appendChild(date);
-          el.adminChart.appendChild(column);
-        });
+      /** Plain-English sentence per audit action (V3-PLAN 7.2's "recent
+       *  activity feed"). actorEmail isn't populated server-side today (only
+       *  actorUserId is recorded -- see src/lib/audit.ts's RecordAuditParams
+       *  and every recordAudit() call site in admin.ts/users.ts), so the
+       *  actor's identity is resolved client-side against the cached user
+       *  list (see ensureActorLookupLoaded/state.admin.usersById) instead of
+       *  reading a field the API never fills in. */
+      var ADMIN_ACTION_SENTENCES = {
+        settings_updated: "updated settings",
+        note_deleted: "deleted a note",
+        file_deleted: "deleted a file",
+        feedback_status_changed: "changed a feedback status",
+        feedback_deleted: "deleted a feedback submission",
+        drops_bulk_deleted: "bulk-deleted drops",
+        user_created: "created an account",
+        user_updated: "updated an account",
+        user_deleted: "deleted an account",
+        role_updated: "updated a role"
+      };
+
+      function describeAuditActor(item) {
+        if (item.actorEmail) return item.actorEmail;
+        if (item.actorUserId && state.admin.usersById[item.actorUserId]) {
+          return state.admin.usersById[item.actorUserId].email;
+        }
+        return "An admin";
       }
 
-      function renderAdminEventCounts(counts) {
-        var labels = {
-          note_created: "Notes created",
-          note_opened: "Local opens",
-          shared_note_opened: "Link, QR and code opens",
-          pin_unlocked: "Successful PIN unlocks",
-          pin_failed: "Failed PIN attempts",
-          note_deleted: "Notes deleted",
-          feedback_submitted: "Feedback submitted",
-          settings_updated: "Settings updates",
-          admin_login: "Admin logins",
-          admin_login_failed: "Failed admin logins"
-        };
-        var keys = Object.keys(counts).sort(function (a, b) { return Number(counts[b]) - Number(counts[a]); });
-        el.adminEventCounts.textContent = "";
-        if (!keys.length) {
-          el.adminEventCounts.textContent = "No analytics events yet.";
+      function describeAuditAction(item) {
+        var sentence = ADMIN_ACTION_SENTENCES[item.action] || ("performed " + item.action.replace(/_/g, " "));
+        if (item.action === "drops_bulk_deleted" && item.after && typeof item.after.deleted === "number") {
+          sentence = "bulk-deleted " + item.after.deleted + " drop" + (item.after.deleted === 1 ? "" : "s");
+        }
+        return describeAuditActor(item) + " " + sentence + ".";
+      }
+
+      function renderAdminActivityFeed(items) {
+        el.adminActivityFeed.textContent = "";
+        if (!items.length) {
+          el.adminActivityFeed.textContent = "No recent activity.";
           return;
         }
-        keys.forEach(function (key) {
+        items.forEach(function (item) {
           var row = document.createElement("div");
           row.className = "flex items-center justify-between gap-4 border-b border-[var(--line)] pb-3";
-          var label = document.createElement("span");
-          label.textContent = labels[key] || key.replace(/_/g, " ");
-          var value = document.createElement("strong");
-          value.textContent = Number(counts[key]).toLocaleString();
-          row.appendChild(label);
-          row.appendChild(value);
-          el.adminEventCounts.appendChild(row);
+          var text = document.createElement("span");
+          text.textContent = describeAuditAction(item);
+          var time = document.createElement("span");
+          time.className = "text-xs text-slate-500";
+          time.textContent = formatDate(item.createdAt);
+          row.appendChild(text);
+          row.appendChild(time);
+          el.adminActivityFeed.appendChild(row);
         });
       }
+
+      /* ------------------------------------------------------------ */
+      /* Drops -- GET /api/admin/drops + POST /api/admin/drops/bulk-delete */
+      /* ------------------------------------------------------------ */
+
+      function renderStorageBar(storage) {
+        if (!el.adminStorageFill || !el.adminStorageLabel) return;
+        var used = Number((storage && storage.fileStorageBytes) || 0);
+        var cap = Number((storage && storage.fileStorageLimitBytes) || 1);
+        var pct = Math.min(100, Math.round((used / cap) * 100));
+        el.adminStorageFill.style.width = pct + "%";
+        el.adminStorageLabel.textContent = formatBytes(used) + " used of " + formatBytes(cap) + " (" + pct + "%)";
+        if (!el.adminStorageWarning) return;
+        if (!storage || !storage.filesBucketConfigured) {
+          el.adminStorageWarning.textContent = "No R2 bucket bound as FILES_BUCKET yet — file sharing will return an error until one is added in Cloudflare.";
+          el.adminStorageWarning.classList.remove("hidden");
+        } else if (pct >= 90) {
+          el.adminStorageWarning.textContent = "Storage is nearly full. Raise the cap or clear old drops below.";
+          el.adminStorageWarning.classList.remove("hidden");
+        } else {
+          el.adminStorageWarning.classList.add("hidden");
+        }
+      }
+
+      async function loadAdminDrops() {
+        if (!el.adminDropsList) return;
+        el.adminDropsList.textContent = "Loading…";
+        try {
+          var d = state.admin.drops;
+          var params = new URLSearchParams();
+          params.set("page", String(d.page));
+          params.set("pageSize", String(d.pageSize));
+          if (d.q) params.set("q", d.q);
+          if (d.type) params.set("type", d.type);
+          if (d.filter) params.set("filter", d.filter);
+          if (d.sort) params.set("sort", d.sort);
+          var data = await adminFetch("/api/admin/drops?" + params.toString());
+          d.total = data.total;
+          renderAdminDrops(data.items || []);
+          renderDropsPagination();
+          // Storage bar lives on this page (V3-PLAN 7.3) but the figure comes
+          // from /api/admin/overview, the only endpoint that computes it --
+          // a light, read-only reuse of that endpoint, not a new one.
+          adminFetch("/api/admin/overview").then(function (overview) {
+            renderStorageBar(overview.storage || {});
+          }).catch(function () {});
+        } catch (error) {
+          el.adminDropsList.textContent = "";
+          toast(error.message || "Unable to load drops.", "error");
+        }
+      }
+
+      function renderAdminDrops(items) {
+        el.adminDropsList.textContent = "";
+        if (!items.length) {
+          el.adminDropsList.textContent = "No drops match these filters.";
+          updateBulkDeleteButton();
+          return;
+        }
+        items.forEach(function (item) {
+          var key = item.type + ":" + item.id;
+          var row = document.createElement("div");
+          row.className = "admin-row";
+
+          var checkbox = document.createElement("input");
+          checkbox.type = "checkbox";
+          checkbox.checked = Boolean(state.admin.drops.selected[key]);
+          checkbox.addEventListener("change", function () { toggleDropSelection(item.type, item.id, checkbox.checked); });
+
+          var main = document.createElement("div");
+          main.className = "admin-row-main";
+          var title = document.createElement("span");
+          title.className = "admin-row-title";
+          title.textContent = item.title;
+          var meta = document.createElement("div");
+          meta.className = "admin-row-meta";
+
+          var typeBadge = document.createElement("span");
+          typeBadge.className = "note-badge";
+          typeBadge.textContent = item.type === "file" ? "File" : "Note";
+          meta.appendChild(typeBadge);
+
+          var codeSpan = document.createElement("span");
+          codeSpan.textContent = item.code;
+          meta.appendChild(codeSpan);
+
+          if (item.locked) {
+            var lockedBadge = document.createElement("span");
+            lockedBadge.className = "note-badge badge-locked";
+            lockedBadge.textContent = "Locked";
+            meta.appendChild(lockedBadge);
+          }
+          // The drops list endpoint can *filter* by burn-after-read but its
+          // SELECT doesn't project the column back out per-row, so an
+          // "Open once" badge can only be shown while that filter is active
+          // (every visible row is then known to match it) -- see the note in
+          // this file's final report about src/routes/admin.ts's DropRow.
+          if (state.admin.drops.filter === "burn") {
+            var burnBadge = document.createElement("span");
+            burnBadge.className = "note-badge badge-burn";
+            burnBadge.textContent = "Open once";
+            meta.appendChild(burnBadge);
+          }
+
+          if (item.ownerDisplayName) {
+            var ownerBadge = document.createElement("span");
+            ownerBadge.className = "tier-badge " + tierBadgeClass(item.ownerRank);
+            ownerBadge.textContent = tierBadgeIcon(item.ownerRank) + " " + item.ownerDisplayName;
+            meta.appendChild(ownerBadge);
+          } else {
+            var anon = document.createElement("span");
+            anon.textContent = "Anonymous";
+            meta.appendChild(anon);
+          }
+
+          var sizeSpan = document.createElement("span");
+          sizeSpan.textContent = item.totalSizeBytes == null ? "—" : formatBytes(item.totalSizeBytes);
+          meta.appendChild(sizeSpan);
+
+          var expirySpan = document.createElement("span");
+          expirySpan.setAttribute("data-expires", String(item.expiresAt));
+          expirySpan.textContent = formatRemaining(item.expiresAt);
+          meta.appendChild(expirySpan);
+
+          main.appendChild(title);
+          main.appendChild(meta);
+
+          var actions = document.createElement("div");
+          actions.className = "admin-row-actions";
+          var deleteButton = document.createElement("button");
+          deleteButton.type = "button";
+          deleteButton.className = "rounded-md border border-red-500/30 px-3 py-2 text-xs text-red-300";
+          deleteButton.setAttribute("data-action", "admin-delete-drop");
+          deleteButton.setAttribute("data-drop-type", item.type);
+          deleteButton.setAttribute("data-drop-id", item.id);
+          deleteButton.textContent = "Delete";
+          actions.appendChild(deleteButton);
+
+          row.appendChild(checkbox);
+          row.appendChild(main);
+          row.appendChild(actions);
+          el.adminDropsList.appendChild(row);
+        });
+        updateBulkDeleteButton();
+      }
+
+      function renderDropsPagination() {
+        if (!el.adminDropsPagination) return;
+        var d = state.admin.drops;
+        var totalPages = Math.max(1, Math.ceil(d.total / d.pageSize));
+        el.adminDropsPagination.textContent = "";
+        var prev = document.createElement("button");
+        prev.type = "button";
+        prev.textContent = "Previous";
+        prev.disabled = d.page <= 1;
+        prev.setAttribute("data-action", "admin-drops-page-prev");
+        var label = document.createElement("span");
+        label.textContent = "Page " + d.page + " of " + totalPages + " · " + d.total + " total";
+        var next = document.createElement("button");
+        next.type = "button";
+        next.textContent = "Next";
+        next.disabled = d.page >= totalPages;
+        next.setAttribute("data-action", "admin-drops-page-next");
+        el.adminDropsPagination.appendChild(prev);
+        el.adminDropsPagination.appendChild(label);
+        el.adminDropsPagination.appendChild(next);
+      }
+
+      function changeDropsPage(delta) {
+        var d = state.admin.drops;
+        var totalPages = Math.max(1, Math.ceil(d.total / d.pageSize));
+        d.page = Math.max(1, Math.min(totalPages, d.page + delta));
+        loadAdminDrops();
+      }
+
+      function toggleDropSelection(type, id, checked) {
+        var key = type + ":" + id;
+        if (checked) state.admin.drops.selected[key] = true;
+        else delete state.admin.drops.selected[key];
+        updateBulkDeleteButton();
+      }
+
+      function toggleSelectAllDrops(checked) {
+        el.adminDropsList.querySelectorAll('input[type="checkbox"]').forEach(function (box) {
+          if (box.checked !== checked) box.click();
+        });
+      }
+
+      function updateBulkDeleteButton() {
+        if (!el.adminDropsBulkDelete) return;
+        var count = Object.keys(state.admin.drops.selected).length;
+        el.adminDropsBulkDelete.classList.toggle("hidden", count === 0);
+        el.adminDropsBulkDelete.textContent = "Delete selected (" + count + ")";
+      }
+
+      async function submitDropsBulkDelete() {
+        var keys = Object.keys(state.admin.drops.selected);
+        if (!keys.length) return;
+        if (!window.confirm("Delete " + keys.length + " selected drop(s) now? This cannot be undone.")) return;
+        var items = keys.map(function (key) {
+          var parts = key.split(":");
+          return { type: parts[0], id: parts.slice(1).join(":") };
+        });
+        try {
+          var result = await adminFetch("/api/admin/drops/bulk-delete", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ items: items })
+          });
+          toast(result.deleted + " drop(s) deleted" + (result.failed ? ", " + result.failed + " failed" : "") + ".", "success");
+          state.admin.drops.selected = Object.create(null);
+          await loadAdminDrops();
+        } catch (error) {
+          toast(error.message || "Unable to delete the selected drops.", "error");
+        }
+      }
+
+      async function adminDeleteDrop(type, id) {
+        if (!window.confirm("Delete this " + type + " now?")) return;
+        try {
+          if (type === "note") {
+            await adminFetch("/api/admin/item/" + encodeURIComponent(id), { method: "DELETE" });
+            toast("Note deleted.", "success");
+          } else {
+            await adminFetch("/api/admin/file/" + encodeURIComponent(id), { method: "DELETE" });
+            toast("File deleted.", "success");
+          }
+          await loadAdminDrops();
+        } catch (error) {
+          toast(error.message || "Unable to delete this drop.", "error");
+        }
+      }
+
+      /* ------------------------------------------------------------ */
+      /* Users -- GET /api/admin/users (paginated) + limits form        */
+      /* ------------------------------------------------------------ */
 
       var adminRolesCache = [];
 
-      async function loadAdminUsers() {
-        if (!el.adminUsers) return;
+      /** Builds/refreshes the userId->{email,displayName} lookup the activity
+       *  feed uses to resolve actorUserId into a readable identity (see
+       *  describeAuditActor above). Loads the full unpaginated user list once
+       *  per admin session and whenever the Users tab is opened. */
+      async function ensureActorLookupLoaded() {
+        if (Object.keys(state.admin.usersById).length) return;
         try {
           var usersData = await adminFetch("/api/admin/users");
-          var rolesData = await adminFetch("/api/admin/roles");
-          adminRolesCache = rolesData.roles;
-          renderAdminUsers(usersData.users, rolesData.roles);
-          renderAdminRoles(rolesData.roles);
-          populateRoleSelect(rolesData.roles);
+          (usersData.users || []).forEach(function (user) {
+            state.admin.usersById[user.id] = user;
+          });
+        } catch (error) {}
+      }
+
+      async function loadAdminUsersPage() {
+        if (!el.adminUsers) return;
+        el.adminUsers.textContent = "Loading…";
+        try {
+          if (!adminRolesCache.length) {
+            var rolesData = await adminFetch("/api/admin/roles");
+            adminRolesCache = rolesData.roles;
+            renderAdminRoles(rolesData.roles);
+            populateRoleSelect(rolesData.roles);
+            populateRoleFilterSelect(rolesData.roles);
+          }
+          var u = state.admin.users;
+          var params = new URLSearchParams();
+          params.set("page", String(u.page));
+          params.set("pageSize", String(u.pageSize));
+          if (u.q) params.set("q", u.q);
+          if (u.role) params.set("role", u.role);
+          if (u.status) params.set("status", u.status);
+          var usersData = await adminFetch("/api/admin/users?" + params.toString());
+          u.total = usersData.total;
+          usersData.users.forEach(function (user) { state.admin.usersById[user.id] = user; });
+          renderAdminUsersList(usersData.users, adminRolesCache);
+          renderUsersPagination();
         } catch (error) {
+          el.adminUsers.textContent = "";
           toast(error.message || "Unable to load accounts.", "error");
         }
       }
@@ -1915,30 +3029,265 @@ import "./style.css";
         });
       }
 
-      function renderAdminUsers(users, roles) {
+      function populateRoleFilterSelect(roles) {
+        if (!el.adminUsersRoleFilter) return;
+        var current = el.adminUsersRoleFilter.value;
+        el.adminUsersRoleFilter.textContent = "";
+        var allOption = document.createElement("option");
+        allOption.value = "";
+        allOption.textContent = "All roles";
+        el.adminUsersRoleFilter.appendChild(allOption);
+        roles.forEach(function (role) {
+          var option = document.createElement("option");
+          option.value = String(role.id);
+          option.textContent = role.name;
+          el.adminUsersRoleFilter.appendChild(option);
+        });
+        el.adminUsersRoleFilter.value = current;
+      }
+
+      /* Per-EffectiveLimits-field form config -- replaces the raw JSON
+       * textarea (V3-PLAN 7.4). numeric fields get a number input; boolean
+       * fields get a checkbox. Each has an "inherit from role" checkbox that,
+       * when checked, omits that key from the customLimits payload entirely
+       * so the server's role/custom merge (limits.ts) falls back cleanly. */
+      var LIMITS_FIELDS = [
+        ["ttlSeconds", "Note expiry (seconds)", "number"],
+        ["maxTextLength", "Max text length", "number"],
+        ["maxFileSizeMB", "Max file size (MB)", "number"],
+        ["maxBatchTotalMB", "Max batch total (MB)", "number"],
+        ["maxFilesPerBatch", "Max files per batch", "number"],
+        ["fileTtlSeconds", "File expiry (seconds)", "number"],
+        ["allowCustomCode", "Allow custom share codes", "boolean"],
+        ["allowClientEncryption", "Allow client-side encryption", "boolean"]
+      ];
+
+      function buildUserLimitsForm(user) {
+        var custom = user.customLimits || {};
+        var form = document.createElement("div");
+        form.className = "limits-form";
+        form.setAttribute("data-limits-user-id", user.id);
+        var grid = document.createElement("div");
+        grid.className = "limits-form-grid";
+        LIMITS_FIELDS.forEach(function (field) {
+          var key = field[0], caption = field[1], type = field[2];
+          var hasOverride = Object.prototype.hasOwnProperty.call(custom, key);
+          var wrap = document.createElement("label");
+          wrap.className = "limits-field";
+          var captionNode = document.createElement("span");
+          captionNode.textContent = caption;
+          var input = document.createElement("input");
+          input.setAttribute("data-limits-field", key);
+          if (type === "boolean") {
+            input.type = "checkbox";
+            input.checked = Boolean(hasOverride ? custom[key] : false);
+          } else {
+            input.type = "number";
+            input.className = "form-field";
+            input.value = hasOverride ? custom[key] : "";
+            input.placeholder = "Role default";
+          }
+          input.disabled = !hasOverride;
+          var inheritWrap = document.createElement("span");
+          inheritWrap.className = "limits-field-inherit";
+          var inheritBox = document.createElement("input");
+          inheritBox.type = "checkbox";
+          inheritBox.checked = !hasOverride;
+          inheritBox.addEventListener("change", function () { input.disabled = inheritBox.checked; });
+          var inheritLabel = document.createElement("span");
+          inheritLabel.textContent = "Inherit from role";
+          inheritWrap.appendChild(inheritBox);
+          inheritWrap.appendChild(inheritLabel);
+          inheritWrap.setAttribute("data-limits-inherit", key);
+          wrap.appendChild(captionNode);
+          wrap.appendChild(input);
+          wrap.appendChild(inheritWrap);
+          grid.appendChild(wrap);
+        });
+        form.appendChild(grid);
+        var saveButton = document.createElement("button");
+        saveButton.type = "button";
+        saveButton.className = "primary-action mt-3 px-4 py-2 text-sm font-semibold";
+        saveButton.setAttribute("data-action", "admin-save-user-limits");
+        saveButton.setAttribute("data-user-id", user.id);
+        saveButton.textContent = "Save limits";
+        form.appendChild(saveButton);
+        return form;
+      }
+
+      function buildUserEditForm(user) {
+        var form = document.createElement("div");
+        form.className = "limits-form";
+        form.setAttribute("data-edit-user-id", user.id);
+
+        var emailWrap = document.createElement("label");
+        emailWrap.className = "limits-field";
+        var emailCaption = document.createElement("span");
+        emailCaption.textContent = "Email (fixed)";
+        var emailInput = document.createElement("input");
+        emailInput.type = "email";
+        emailInput.className = "form-field";
+        emailInput.value = user.email;
+        emailInput.disabled = true;
+        emailWrap.appendChild(emailCaption);
+        emailWrap.appendChild(emailInput);
+
+        var nameWrap = document.createElement("label");
+        nameWrap.className = "limits-field";
+        var nameCaption = document.createElement("span");
+        nameCaption.textContent = "Display name";
+        var nameInput = document.createElement("input");
+        nameInput.type = "text";
+        nameInput.className = "form-field";
+        nameInput.maxLength = 80;
+        nameInput.value = user.displayName;
+        nameInput.setAttribute("data-edit-field", "displayName");
+        nameWrap.appendChild(nameCaption);
+        nameWrap.appendChild(nameInput);
+
+        var passwordWrap = document.createElement("label");
+        passwordWrap.className = "limits-field";
+        var passwordCaption = document.createElement("span");
+        passwordCaption.textContent = "New password (leave blank to keep current)";
+        var passwordInput = document.createElement("input");
+        passwordInput.type = "password";
+        passwordInput.className = "form-field";
+        passwordInput.autocomplete = "new-password";
+        passwordInput.minLength = 10;
+        passwordInput.placeholder = "At least 10 characters";
+        passwordInput.setAttribute("data-edit-field", "password");
+        passwordWrap.appendChild(passwordCaption);
+        passwordWrap.appendChild(passwordInput);
+
+        var grid = document.createElement("div");
+        grid.className = "limits-form-grid";
+        grid.appendChild(emailWrap);
+        grid.appendChild(nameWrap);
+        grid.appendChild(passwordWrap);
+        form.appendChild(grid);
+
+        var saveButton = document.createElement("button");
+        saveButton.type = "button";
+        saveButton.className = "primary-action mt-3 px-4 py-2 text-sm font-semibold";
+        saveButton.setAttribute("data-action", "admin-save-user-edit");
+        saveButton.setAttribute("data-user-id", user.id);
+        saveButton.textContent = "Save details";
+        form.appendChild(saveButton);
+        return form;
+      }
+
+      function toggleUserEditForm(userId) {
+        var existing = document.querySelector('[data-edit-user-id="' + userId + '"]');
+        if (existing) { existing.remove(); return; }
+        var user = state.admin.usersById[userId];
+        if (!user) return;
+        var row = document.querySelector('[data-user-row-id="' + userId + '"]');
+        if (!row) return;
+        row.insertAdjacentElement("afterend", buildUserEditForm(user));
+      }
+
+      async function saveUserEdit(userId) {
+        var form = document.querySelector('[data-edit-user-id="' + userId + '"]');
+        if (!form) return;
+        var nameInput = form.querySelector('[data-edit-field="displayName"]');
+        var passwordInput = form.querySelector('[data-edit-field="password"]');
+        var payload = {};
+        if (nameInput && nameInput.value.trim()) payload.displayName = nameInput.value.trim();
+        var password = passwordInput ? passwordInput.value : "";
+        if (password) {
+          if (password.length < 10) {
+            toast("Password must be at least 10 characters.", "error");
+            return;
+          }
+          payload.password = password;
+        }
+        if (!Object.keys(payload).length) {
+          toast("Nothing to save.", "error");
+          return;
+        }
+        try {
+          await adminFetch("/api/admin/users/" + userId, {
+            method: "PATCH",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify(payload)
+          });
+          toast("Account updated.", "success");
+          form.remove();
+          await loadAdminUsersPage();
+        } catch (error) {
+          toast(error.message || "Unable to update account.", "error");
+        }
+      }
+
+      function toggleUserLimitsForm(userId) {
+        var existing = document.querySelector('[data-limits-user-id="' + userId + '"]');
+        if (existing) { existing.remove(); return; }
+        var user = state.admin.usersById[userId];
+        if (!user) return;
+        var row = document.querySelector('[data-user-row-id="' + userId + '"]');
+        if (!row) return;
+        row.insertAdjacentElement("afterend", buildUserLimitsForm(user));
+      }
+
+      async function saveUserLimits(userId) {
+        var form = document.querySelector('[data-limits-user-id="' + userId + '"]');
+        if (!form) return;
+        var payload = {};
+        LIMITS_FIELDS.forEach(function (field) {
+          var key = field[0], type = field[2];
+          var inheritBox = form.querySelector('[data-limits-inherit="' + key + '"] input');
+          if (inheritBox && inheritBox.checked) return;
+          var input = form.querySelector('[data-limits-field="' + key + '"]');
+          if (!input) return;
+          if (type === "boolean") payload[key] = input.checked;
+          else if (input.value !== "") payload[key] = Number(input.value);
+        });
+        try {
+          await adminFetch("/api/admin/users/" + userId, {
+            method: "PATCH",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ customLimits: payload })
+          });
+          toast("Limits saved.", "success");
+          await loadAdminUsersPage();
+        } catch (error) {
+          toast(error.message || "Unable to save limits.", "error");
+        }
+      }
+
+      function renderAdminUsersList(users, roles) {
         el.adminUsers.textContent = "";
         if (!users.length) {
-          el.adminUsers.textContent = "No accounts yet.";
+          el.adminUsers.textContent = "No accounts match these filters.";
           return;
         }
         users.forEach(function (user) {
           var row = document.createElement("div");
-          row.className = "admin-list-row";
+          row.className = "admin-row";
+          row.setAttribute("data-user-row-id", user.id);
+
+          var spacer = document.createElement("span");
 
           var body = document.createElement("div");
-          body.className = "min-w-0";
-          var title = document.createElement("strong");
-          title.className = "block truncate";
+          body.className = "admin-row-main";
+          var title = document.createElement("span");
+          title.className = "admin-row-title";
           title.textContent = user.displayName + " · " + user.email;
-          var meta = document.createElement("p");
-          meta.className = "mt-1 text-xs text-slate-500";
-          meta.textContent = (user.status === "active" ? "Active" : "Disabled") +
+          var meta = document.createElement("div");
+          meta.className = "admin-row-meta";
+          var tierBadge = document.createElement("span");
+          tierBadge.className = "tier-badge " + tierBadgeClass(user.rank);
+          tierBadge.textContent = tierBadgeIcon(user.rank) + " " + user.roleName;
+          meta.appendChild(tierBadge);
+          var statusText = document.createElement("span");
+          statusText.textContent = (user.status === "active" ? "Active" : "Disabled") +
             (user.lastLoginAt ? " · last login " + formatDate(user.lastLoginAt) : " · never logged in");
+          meta.appendChild(statusText);
           body.appendChild(title);
           body.appendChild(meta);
 
           var controls = document.createElement("div");
-          controls.className = "flex items-center gap-2";
+          controls.className = "admin-row-actions";
 
           var roleSelect = document.createElement("select");
           roleSelect.className = "filter-select";
@@ -1950,6 +3299,20 @@ import "./style.css";
             roleSelect.appendChild(option);
           });
           roleSelect.addEventListener("change", function () { changeUserRole(user.id, roleSelect.value); });
+
+          var editButton = document.createElement("button");
+          editButton.type = "button";
+          editButton.className = "rounded-md border border-white/10 px-3 py-2 text-xs text-slate-300";
+          editButton.setAttribute("data-action", "admin-toggle-user-edit");
+          editButton.setAttribute("data-user-id", user.id);
+          editButton.textContent = "Edit";
+
+          var limitsButton = document.createElement("button");
+          limitsButton.type = "button";
+          limitsButton.className = "rounded-md border border-white/10 px-3 py-2 text-xs text-slate-300";
+          limitsButton.setAttribute("data-action", "admin-toggle-user-limits");
+          limitsButton.setAttribute("data-user-id", user.id);
+          limitsButton.textContent = "Limits";
 
           var toggleButton = document.createElement("button");
           toggleButton.type = "button";
@@ -1967,13 +3330,45 @@ import "./style.css";
           deleteButton.textContent = "Delete";
 
           controls.appendChild(roleSelect);
+          controls.appendChild(editButton);
+          controls.appendChild(limitsButton);
           controls.appendChild(toggleButton);
           controls.appendChild(deleteButton);
 
+          row.appendChild(spacer);
           row.appendChild(body);
           row.appendChild(controls);
           el.adminUsers.appendChild(row);
         });
+      }
+
+      function renderUsersPagination() {
+        if (!el.adminUsersPagination) return;
+        var u = state.admin.users;
+        var totalPages = Math.max(1, Math.ceil(u.total / u.pageSize));
+        el.adminUsersPagination.textContent = "";
+        var prev = document.createElement("button");
+        prev.type = "button";
+        prev.textContent = "Previous";
+        prev.disabled = u.page <= 1;
+        prev.setAttribute("data-action", "admin-users-page-prev");
+        var label = document.createElement("span");
+        label.textContent = "Page " + u.page + " of " + totalPages + " · " + u.total + " total";
+        var next = document.createElement("button");
+        next.type = "button";
+        next.textContent = "Next";
+        next.disabled = u.page >= totalPages;
+        next.setAttribute("data-action", "admin-users-page-next");
+        el.adminUsersPagination.appendChild(prev);
+        el.adminUsersPagination.appendChild(label);
+        el.adminUsersPagination.appendChild(next);
+      }
+
+      function changeUsersPage(delta) {
+        var u = state.admin.users;
+        var totalPages = Math.max(1, Math.ceil(u.total / u.pageSize));
+        u.page = Math.max(1, Math.min(totalPages, u.page + delta));
+        loadAdminUsersPage();
       }
 
       function renderAdminRoles(roles) {
@@ -2059,12 +3454,23 @@ import "./style.css";
           });
           el.adminUserCreateForm.reset();
           toast("Account created.", "success");
-          await loadAdminUsers();
+          await loadAdminUsersPage();
         } catch (error) {
           toast(error.message || "Unable to create account.", "error");
         } finally {
           el.adminUserCreateSubmit.disabled = false;
         }
+      }
+
+      /** Client-side-only handoff from an approved account request (Inbox)
+       *  into this Create account form -- no new endpoint (V3-PLAN 7.5). */
+      function prefillCreateAccountForm(name, email) {
+        if (el.newUserName) el.newUserName.value = name || "";
+        if (el.newUserEmail) el.newUserEmail.value = email || "";
+        if (el.adminUserCreateSection && el.adminUserCreateSection.scrollIntoView) {
+          el.adminUserCreateSection.scrollIntoView({ behavior: "smooth", block: "start" });
+        }
+        if (el.newUserPassword) el.newUserPassword.focus();
       }
 
       async function changeUserRole(userId, roleId) {
@@ -2077,7 +3483,7 @@ import "./style.css";
           toast("Role updated.", "success");
         } catch (error) {
           toast(error.message || "Unable to update role.", "error");
-          await loadAdminUsers();
+          await loadAdminUsersPage();
         }
       }
 
@@ -2089,7 +3495,7 @@ import "./style.css";
             body: JSON.stringify({ status: nextStatus })
           });
           toast(nextStatus === "active" ? "Account enabled." : "Account disabled.", "success");
-          await loadAdminUsers();
+          await loadAdminUsersPage();
         } catch (error) {
           toast(error.message || "Unable to update account.", "error");
         }
@@ -2099,7 +3505,7 @@ import "./style.css";
         try {
           await adminFetch("/api/admin/users/" + userId, { method: "DELETE" });
           toast("Account deleted.", "success");
-          await loadAdminUsers();
+          await loadAdminUsersPage();
         } catch (error) {
           toast(error.message || "Unable to delete account.", "error");
         }
@@ -2130,106 +3536,26 @@ import "./style.css";
             body: JSON.stringify(payload)
           });
           toast("Role saved.", "success");
-          await loadAdminUsers();
+          await loadAdminUsersPage();
         } catch (error) {
           toast(error.message || "Unable to save role.", "error");
         }
       }
 
-      function renderAdminNotes(notes) {
-        el.adminNotes.textContent = "";
-        if (!notes.length) {
-          el.adminNotes.textContent = "No active notes.";
-          return;
-        }
-        notes.forEach(function (item) {
-          var row = document.createElement("div");
-          row.className = "admin-list-row";
-          var body = document.createElement("div");
-          body.className = "min-w-0";
-          var title = document.createElement("strong");
-          title.className = "block truncate";
-          title.textContent = item.title;
-          var meta = document.createElement("p");
-          meta.className = "mt-1 text-xs text-slate-500";
-          meta.textContent = item.code + " · " + (item.locked ? "PIN locked" : "Open") + " · " + formatRemaining(item.expiresAt);
-          body.appendChild(title);
-          body.appendChild(meta);
-          var button = document.createElement("button");
-          button.type = "button";
-          button.className = "rounded-md border border-red-500/30 px-3 py-2 text-xs text-red-300";
-          button.setAttribute("data-action", "admin-delete-note");
-          button.setAttribute("data-admin-item-id", item.id);
-          button.textContent = "Delete";
-          row.appendChild(body);
-          row.appendChild(button);
-          el.adminNotes.appendChild(row);
-        });
-      }
-
-      function renderAdminFiles(files, storage) {
-        if (el.adminStorageFill && el.adminStorageLabel) {
-          var used = Number((storage && storage.fileStorageBytes) || 0);
-          var cap = Number((storage && storage.fileStorageLimitBytes) || 1);
-          var pct = Math.min(100, Math.round((used / cap) * 100));
-          el.adminStorageFill.style.width = pct + "%";
-          el.adminStorageLabel.textContent = formatBytes(used) + " used of " + formatBytes(cap) + " (" + pct + "%)";
-          if (el.adminStorageWarning) {
-            if (!storage || !storage.filesBucketConfigured) {
-              el.adminStorageWarning.textContent = "No R2 bucket bound as FILES_BUCKET yet — file sharing will return an error until one is added in Cloudflare.";
-              el.adminStorageWarning.classList.remove("hidden");
-            } else if (pct >= 90) {
-              el.adminStorageWarning.textContent = "Storage is nearly full. Raise the cap or clear old files below.";
-              el.adminStorageWarning.classList.remove("hidden");
-            } else {
-              el.adminStorageWarning.classList.add("hidden");
-            }
-          }
-        }
-        if (!el.adminFiles) return;
-        el.adminFiles.textContent = "";
-        if (!files.length) {
-          el.adminFiles.textContent = "No active files.";
-          return;
-        }
-        files.forEach(function (item) {
-          var row = document.createElement("div");
-          row.className = "admin-list-row";
-          var body = document.createElement("div");
-          body.className = "min-w-0";
-          var title = document.createElement("strong");
-          title.className = "block truncate";
-          title.textContent = item.title;
-          var meta = document.createElement("p");
-          meta.className = "mt-1 text-xs text-slate-500";
-          meta.textContent = item.code + " · " + formatBytes(item.sizeBytes) + " · "
-            + (item.locked ? "PIN locked" : "Open") + " · " + item.downloadCount + " downloads · "
-            + formatRemaining(item.expiresAt);
-          body.appendChild(title);
-          body.appendChild(meta);
-          var button = document.createElement("button");
-          button.type = "button";
-          button.className = "rounded-md border border-red-500/30 px-3 py-2 text-xs text-red-300";
-          button.setAttribute("data-action", "admin-delete-file");
-          button.setAttribute("data-admin-file-id", item.id);
-          button.textContent = "Delete";
-          row.appendChild(body);
-          row.appendChild(button);
-          el.adminFiles.appendChild(row);
-        });
-      }
-
-      var SHARED_BY_RANK_COLORS = { 0: "#f5c94a", 1: "#c9c9d6", 2: "#c98a4a" };
-
-      function buildSharedByBadge(sharedBy) {
+      /** V3-PLAN 3.3: one shared render helper for the tier chip next to a
+       *  drop's "shared by" name, used identically on the Nearby text board
+       *  and the Nearby files board (Task 3 -- notes.ts/files.ts already
+       *  include sharedBy.rank on every public list/open response). Only
+       *  Admin (rank 0) also gets the loud .tier-card-admin row treatment;
+       *  Pro (1) and Member (2) get the chip only, no card change; no
+       *  sharedBy (anonymous) leaves the row exactly as before. */
+      function buildSharedByBadge(sharedBy, cardEl) {
         if (!sharedBy || !sharedBy.name) return null;
         var badge = document.createElement("span");
-        badge.className = "note-badge";
-        badge.textContent = sharedBy.name + " · " + sharedBy.role;
-        var color = SHARED_BY_RANK_COLORS[sharedBy.rank];
-        if (color) {
-          badge.style.color = color;
-          badge.style.borderColor = color;
+        badge.className = "tier-badge " + tierBadgeClass(sharedBy.rank);
+        badge.textContent = tierBadgeIcon(sharedBy.rank) + " " + sharedBy.name;
+        if (cardEl && Number(sharedBy.rank) === 0) {
+          cardEl.classList.add("tier-card-admin");
         }
         return badge;
       }
@@ -2242,13 +3568,74 @@ import "./style.css";
         return (value / (1024 * 1024 * 1024)).toFixed(2) + " GB";
       }
 
-      function renderAdminFeedback(feedback) {
-        el.adminFeedback.textContent = "";
-        if (!feedback.length) {
-          el.adminFeedback.textContent = "No feedback submitted yet.";
+      /* ------------------------------------------------------------ */
+      /* Inbox -- GET /api/admin/feedback (feedback + account requests) */
+      /* ------------------------------------------------------------ */
+
+      function switchInboxSubtab(tabName) {
+        el.adminInboxTabs.forEach(function (tab) {
+          var active = tab.getAttribute("data-inbox-tab") === tabName;
+          tab.classList.toggle("active", active);
+          tab.setAttribute("aria-selected", active ? "true" : "false");
+        });
+      }
+
+      /** account_request rows are mixed into the same feedback table as bug
+       *  reports (see feedback.ts) -- GET /api/admin/feedback filters by a
+       *  single category value, so "general feedback" (bug/suggestion/
+       *  design/other combined) has no server-side "not account_request"
+       *  option. Fetched unfiltered and account_request rows are dropped
+       *  client-side for that tab; the Account requests tab passes
+       *  category=account_request explicitly and needs no such filtering. */
+      async function loadAdminInbox() {
+        if (!el.adminInboxList) return;
+        el.adminInboxList.textContent = "Loading…";
+        try {
+          var inbox = state.admin.inbox;
+          var isRequests = inbox.tab === "requests";
+          var params = new URLSearchParams();
+          params.set("page", String(inbox.page));
+          params.set("pageSize", String(inbox.pageSize));
+          if (inbox.status) params.set("status", inbox.status);
+          if (isRequests) params.set("category", "account_request");
+          var data = await adminFetch("/api/admin/feedback?" + params.toString());
+          var items = data.items || [];
+          if (!isRequests) items = items.filter(function (item) { return item.category !== "account_request"; });
+          inbox.total = isRequests ? data.total : items.length;
+          renderAdminInboxList(items, isRequests);
+          renderInboxPagination();
+          loadInboxCounts(isRequests);
+        } catch (error) {
+          el.adminInboxList.textContent = "";
+          toast(error.message || "Unable to load the inbox.", "error");
+        }
+      }
+
+      async function loadInboxCounts(isRequests) {
+        if (!el.adminInboxCounts) return;
+        try {
+          var base = isRequests ? "&category=account_request" : "";
+          var statuses = ["new", "reviewed", "resolved"];
+          var results = await Promise.all(statuses.map(function (status) {
+            return adminFetch("/api/admin/feedback?pageSize=1&status=" + status + base);
+          }));
+          el.adminInboxCounts.textContent = "";
+          statuses.forEach(function (status, index) {
+            var chip = document.createElement("span");
+            chip.className = "note-badge";
+            chip.textContent = status.charAt(0).toUpperCase() + status.slice(1) + ": " + (results[index].total || 0);
+            el.adminInboxCounts.appendChild(chip);
+          });
+        } catch (error) {}
+      }
+
+      function renderAdminInboxList(items, isRequests) {
+        el.adminInboxList.textContent = "";
+        if (!items.length) {
+          el.adminInboxList.textContent = isRequests ? "No account requests." : "No feedback submitted yet.";
           return;
         }
-        feedback.forEach(function (item) {
+        items.forEach(function (item) {
           var row = document.createElement("article");
           row.className = "border-b border-[var(--line)] py-4 first:pt-0 last:border-0 last:pb-0";
           var top = document.createElement("div");
@@ -2268,6 +3655,17 @@ import "./style.css";
           details.textContent = (item.email || "No email") + " · " + formatDate(item.createdAt);
           var actions = document.createElement("div");
           actions.className = "mt-3 flex flex-wrap gap-2";
+          if (isRequests) {
+            var approve = document.createElement("button");
+            approve.type = "button";
+            approve.className = "rounded-md border border-[var(--line)] px-3 py-1.5 text-xs font-semibold text-[var(--accent)]";
+            approve.setAttribute("data-action", "admin-approve-request");
+            approve.setAttribute("data-feedback-id", item.id);
+            approve.setAttribute("data-email", item.email || "");
+            approve.setAttribute("data-name", (item.message || "").split("\n")[0].slice(0, 80));
+            approve.textContent = "Approve →";
+            actions.appendChild(approve);
+          }
           ["new", "reviewed", "resolved"].forEach(function (nextStatus) {
             var button = document.createElement("button");
             button.type = "button";
@@ -2290,8 +3688,74 @@ import "./style.css";
           row.appendChild(message);
           row.appendChild(details);
           row.appendChild(actions);
-          el.adminFeedback.appendChild(row);
+          el.adminInboxList.appendChild(row);
         });
+      }
+
+      function renderInboxPagination() {
+        if (!el.adminInboxPagination) return;
+        var i = state.admin.inbox;
+        var totalPages = Math.max(1, Math.ceil(i.total / i.pageSize));
+        el.adminInboxPagination.textContent = "";
+        var prev = document.createElement("button");
+        prev.type = "button";
+        prev.textContent = "Previous";
+        prev.disabled = i.page <= 1;
+        prev.setAttribute("data-action", "admin-inbox-page-prev");
+        var label = document.createElement("span");
+        label.textContent = "Page " + i.page + " of " + totalPages + " · " + i.total + " total";
+        var next = document.createElement("button");
+        next.type = "button";
+        next.textContent = "Next";
+        next.disabled = i.page >= totalPages;
+        next.setAttribute("data-action", "admin-inbox-page-next");
+        el.adminInboxPagination.appendChild(prev);
+        el.adminInboxPagination.appendChild(label);
+        el.adminInboxPagination.appendChild(next);
+      }
+
+      function changeInboxPage(delta) {
+        var i = state.admin.inbox;
+        var totalPages = Math.max(1, Math.ceil(i.total / i.pageSize));
+        i.page = Math.max(1, Math.min(totalPages, i.page + delta));
+        loadAdminInbox();
+      }
+
+      function approveAccountRequest(name, email) {
+        switchAdminTab("users");
+        loadAdminTabData("users");
+        prefillCreateAccountForm(name, email);
+        toast("Prefilled the create-account form -- pick a role and password to finish.", "success");
+      }
+
+      /* ------------------------------------------------------------ */
+      /* Settings -- unchanged PATCH /api/admin/settings, sub-nav only  */
+      /* ------------------------------------------------------------ */
+
+      function switchSettingsSubtab(name) {
+        el.adminSettingsSubtabs.forEach(function (tab) {
+          var active = tab.getAttribute("data-settings-subtab") === name;
+          tab.classList.toggle("active", active);
+          tab.setAttribute("aria-selected", active ? "true" : "false");
+        });
+        el.adminSettingsPanels.forEach(function (panel) {
+          panel.classList.toggle("hidden", panel.getAttribute("data-settings-panel") !== name);
+        });
+      }
+
+      /** Settings has no dedicated GET endpoint of its own -- the only route
+       *  that returns the full SiteSettings object is the legacy, untouched
+       *  GET /api/admin/dashboard (kept alive server-side for exactly this).
+       *  Only its `settings` field is used here; notes/files/feedback/stats/
+       *  chart/eventCounts from that payload are ignored in favor of the
+       *  Overview/Drops/Users/Inbox tabs' own paginated endpoints. */
+      async function loadAdminSettingsTab() {
+        try {
+          var data = await adminFetch("/api/admin/dashboard");
+          fillAdminSettings(data.settings || {});
+        } catch (error) {
+          toast(error.message || "Unable to load settings.", "error");
+        }
       }
 
       function fillAdminSettings(settings) {
@@ -2311,89 +3775,39 @@ import "./style.css";
         el.settingFeedbackEnabled.checked = Boolean(settings.feedbackEnabled);
         el.settingAnalyticsEnabled.checked = Boolean(settings.analyticsEnabled);
         el.settingMaintenance.checked = Boolean(settings.maintenanceMode);
-        el.settingHeroEnabled.checked = Boolean(settings.heroEnabled);
-        el.settingHeroPanelEnabled.checked = Boolean(settings.heroPanelEnabled);
         el.settingAnnouncementEnabled.checked = Boolean(settings.announcementEnabled);
-        el.settingTickerEnabled.checked = Boolean(settings.tickerEnabled);
-        el.settingCreateSectionEnabled.checked = Boolean(settings.createSectionEnabled);
-        el.settingAvailableSectionEnabled.checked = Boolean(settings.availableSectionEnabled);
-        el.settingOpenCodeSectionEnabled.checked = Boolean(settings.openCodeSectionEnabled);
-        el.settingGuideEnabled.checked = Boolean(settings.guideEnabled);
-        el.settingAboutEnabled.checked = Boolean(settings.aboutEnabled);
-        el.settingFooterEnabled.checked = Boolean(settings.footerEnabled);
-        el.settingSocialLinksEnabled.checked = Boolean(settings.socialLinksEnabled);
-        el.settingFooterShowYear.checked = Boolean(settings.footerShowYear);
-        el.settingFooterShowDeveloper.checked = Boolean(settings.footerShowDeveloper);
         renderAdminContentFields(settings);
       }
 
       function renderAdminContentFields(settings) {
+        // Rebuilt for the V3 settings cut (V3-PLAN.md section 2): every
+        // group here now maps 1:1 onto the ~59 surviving DEFAULT_SETTINGS
+        // keys (Tier 1 operational + Tier 2 brand/marketing). The ~90
+        // deleted micro-copy keys (header/drawer/hero-panel/ticker/guide/
+        // feedback labels, section-visibility toggles, files/QR-tool
+        // labels) moved to client/copy.js and are no longer admin-editable.
         var groups = [
-          ["Header labels", [
-            ["headerCreateText", "Create link"], ["headerAvailableText", "Available link"],
-            ["headerOpenCodeText", "Open-code link"], ["headerGuideText", "Guide link"],
-            ["headerFeedbackText", "Feedback link"], ["headerAboutText", "About link"],
-            ["headerNewNoteText", "New-note button"], ["drawerCreateText", "Drawer create button"],
-            ["drawerOpenCodeText", "Drawer open-code button"], ["drawerScanText", "Drawer QR button"]
-          ]],
+          ["Announcement", [
+            ["announcementLabel", "Announcement badge"]
+          ], "general"],
           ["Hero section", [
-            ["heroEyebrow", "Eyebrow"], ["heroTitlePrimary", "Main title"],
-            ["heroTitleOutline", "Outlined title"], ["heroDescription", "Description", "textarea"],
-            ["heroPrimaryButtonText", "Primary button"], ["heroSecondaryButtonText", "Secondary button"],
-            ["heroPanelEyebrow", "Panel eyebrow"], ["heroPanelTitle", "Panel title"],
-            ["heroPanelText", "Panel description", "textarea"], ["heroPanelStep1", "Flow step 1"],
-            ["heroPanelStep2", "Flow step 2"], ["heroPanelStep3", "Flow step 3"],
-            ["heroPanelStat1Value", "Stat 1 value"], ["heroPanelStat1Label", "Stat 1 label"],
-            ["heroPanelStat2Value", "Stat 2 value"], ["heroPanelStat2Label", "Stat 2 label"]
-          ]],
-          ["Announcement and ticker", [
-            ["announcementLabel", "Announcement badge"],
-            ["tickerItem1", "Ticker item 1"], ["tickerItem2", "Ticker item 2"],
-            ["tickerItem3", "Ticker item 3"], ["tickerItem4", "Ticker item 4"]
-          ]],
-          ["Create and available notes", [
-            ["createSectionTitle", "Create heading"], ["createSectionSubtitle", "Create subtitle"],
-            ["createTitlePlaceholder", "Title placeholder"], ["createTextPlaceholder", "Text placeholder"],
-            ["createButtonText", "Save button"], ["createTemporaryBadge", "Temporary badge"],
-            ["createPrivacyNote", "Privacy note", "textarea"], ["pinToggleText", "PIN toggle label"],
-            ["availableTitle", "Available heading"],
-            ["availableSearchPlaceholder", "Search placeholder"], ["availableEmptyText", "Empty message"],
-            ["openCodeTitle", "Open-code heading"], ["openCodePlaceholder", "Code placeholder"],
-            ["openCodeButtonText", "Open-code button"],
-            ["scanQrText", "QR scanner button"]
-          ]],
-          ["Guide and feedback", [
-            ["guideEyebrow", "Guide eyebrow"], ["guideTitle", "Guide heading"],
-            ["guideStep1Title", "Step 1 title"], ["guideStep1Text", "Step 1 text", "textarea"],
-            ["guideStep2Title", "Step 2 title"], ["guideStep2Text", "Step 2 text", "textarea"],
-            ["guideStep3Title", "Step 3 title"], ["guideStep3Text", "Step 3 text", "textarea"],
-            ["guideStep4Title", "Step 4 title"], ["guideStep4Text", "Step 4 text", "textarea"],
-            ["feedbackEyebrow", "Feedback eyebrow"], ["feedbackTitle", "Feedback heading"],
-            ["feedbackIntro", "Feedback introduction", "textarea"], ["feedbackButtonText", "Feedback button"]
-          ]],
+            ["heroTitlePrimary", "Main title"], ["heroTitleOutline", "Outlined title"],
+            ["heroDescription", "Description", "textarea"],
+            ["heroPrimaryButtonText", "Primary button"], ["heroSecondaryButtonText", "Secondary button"]
+          ], "content"],
           ["About and developer", [
-            ["aboutEyebrow", "About eyebrow"], ["aboutTitle", "About heading"],
-            ["aboutText", "About description", "textarea"], ["developerName", "Developer name"],
-            ["developerRole", "Developer role"], ["developerBio", "Developer bio", "textarea"],
-            ["developerWebsite", "Developer website", "url"], ["developerEmail", "Developer email", "email"],
-            ["privacyText", "Privacy statement", "textarea"], ["adminLinkText", "Admin link label"]
-          ]],
+            ["aboutTitle", "About heading"], ["aboutText", "About description", "textarea"],
+            ["developerName", "Developer name"], ["developerRole", "Developer role"],
+            ["developerBio", "Developer bio", "textarea"],
+            ["developerWebsite", "Developer website", "url"], ["developerEmail", "Developer email", "email"]
+          ], "content"],
           ["Footer, social and maintenance", [
-            ["footerTagline", "Footer tagline"], ["footerExploreTitle", "Explore heading"],
-            ["footerInformationTitle", "Information heading"], ["footerConnectTitle", "Connect heading"],
-            ["footerCreateText", "Footer create link"], ["footerAvailableText", "Footer available link"],
-            ["footerOpenCodeText", "Footer open-code link"], ["footerGuideText", "Footer guide link"],
-            ["footerFeedbackText", "Footer feedback link"], ["footerAboutText", "Footer about link"],
-            ["footerRightsText", "Rights text"],
-            ["footerDeveloperPrefix", "Developer credit prefix"],
+            ["footerTagline", "Footer tagline"],
             ["socialFacebook", "Facebook URL", "url"], ["socialInstagram", "Instagram URL", "url"],
             ["socialX", "X URL", "url"], ["socialLinkedIn", "LinkedIn URL", "url"],
             ["socialGitHub", "GitHub URL", "url"], ["socialYouTube", "YouTube URL", "url"],
-            ["maintenanceEyebrow", "Maintenance eyebrow"], ["maintenanceTitle", "Maintenance title"], ["maintenanceMessage", "Maintenance message", "textarea"],
-            ["feedbackMessagePlaceholder", "Feedback message placeholder"],
-            ["feedbackEmailPlaceholder", "Feedback email placeholder"],
-            ["maintenanceButtonText", "Maintenance button"]
-          ]],
+            ["maintenanceTitle", "Maintenance title"], ["maintenanceMessage", "Maintenance message", "textarea"]
+          ], "content"],
           ["File sharing limits", [
             ["fileSharingEnabled", "Enable file sharing", "checkbox"],
             ["maxFileSizeMB", "Max file size (MB)", "number", 1, 200],
@@ -2402,21 +3816,11 @@ import "./style.css";
             ["fileUploadCooldownSeconds", "Upload cooldown (seconds)", "number", 1, 120],
             ["maxActiveFiles", "Max active files per network", "number", 10, 2000],
             ["allowedFileExtensions", "Allowed extensions (comma-separated, blank = all)"],
-            ["blockedFileExtensions", "Blocked extensions (comma-separated)"],
-            ["headerFilesText", "Files nav link"], ["filesSectionTitle", "Files section heading"],
-            ["filesSectionSubtitle", "Files section subtitle"],
-            ["filesUploadPlaceholder", "Title placeholder"], ["filesUploadButtonText", "Upload button"],
-            ["filesTemporaryBadge", "Temporary badge"], ["filesPrivacyNote", "Privacy note", "textarea"],
-            ["filesAvailableTitle", "Available files heading"], ["filesEmptyText", "Empty message"],
-            ["filesDropHint", "Drop-zone hint text"]
-          ]],
+            ["blockedFileExtensions", "Blocked extensions (comma-separated)"]
+          ], "limits"],
           ["QR link generator", [
-            ["qrLinkToolEnabled", "Enable standalone QR tool", "checkbox"],
-            ["headerQrToolText", "Nav link label"], ["qrLinkToolEyebrow", "Eyebrow"],
-            ["qrLinkToolTitle", "Heading"], ["qrLinkToolSubtitle", "Subtitle", "textarea"],
-            ["qrLinkToolPlaceholder", "URL input placeholder"],
-            ["qrLinkToolButtonText", "Generate button"], ["qrLinkToolDownloadText", "Download button"]
-          ]],
+            ["qrLinkToolEnabled", "Enable standalone QR tool", "checkbox"]
+          ], "limits"],
           ["SEO", [
             ["seoEnabled", "Enable SEO tags", "checkbox"],
             ["seoSiteTitle", "Site title (<title> tag)"],
@@ -2427,10 +3831,18 @@ import "./style.css";
             ["seoCanonicalBaseUrl", "Canonical base URL (blank = auto-detect)", "url"],
             ["seoGoogleSiteVerification", "Google site verification code"],
             ["seoRobotsDirective", "Robots directive", "select", ["index, follow", "noindex, follow", "index, nofollow", "noindex, nofollow"]]
-          ]]
+          ], "seo"]
         ];
-        el.adminContentFields.textContent = "";
+        var targets = {
+          general: el.adminContentFieldsGeneral,
+          limits: el.adminContentFieldsLimits,
+          content: el.adminContentFieldsContent,
+          seo: el.adminContentFieldsSeo
+        };
+        Object.keys(targets).forEach(function (key) { if (targets[key]) targets[key].textContent = ""; });
         groups.forEach(function (group) {
+          var container = targets[group[2]];
+          if (!container) return;
           var section = document.createElement("section");
           section.className = "content-field-group";
           var heading = document.createElement("h3");
@@ -2494,7 +3906,7 @@ import "./style.css";
           });
           section.appendChild(heading);
           section.appendChild(grid);
-          el.adminContentFields.appendChild(section);
+          container.appendChild(section);
         });
       }
 
@@ -2520,21 +3932,9 @@ import "./style.css";
             feedbackEnabled: el.settingFeedbackEnabled.checked,
             analyticsEnabled: el.settingAnalyticsEnabled.checked,
             maintenanceMode: el.settingMaintenance.checked,
-            heroEnabled: el.settingHeroEnabled.checked,
-            heroPanelEnabled: el.settingHeroPanelEnabled.checked,
-            announcementEnabled: el.settingAnnouncementEnabled.checked,
-            tickerEnabled: el.settingTickerEnabled.checked,
-            createSectionEnabled: el.settingCreateSectionEnabled.checked,
-            availableSectionEnabled: el.settingAvailableSectionEnabled.checked,
-            openCodeSectionEnabled: el.settingOpenCodeSectionEnabled.checked,
-            guideEnabled: el.settingGuideEnabled.checked,
-            aboutEnabled: el.settingAboutEnabled.checked,
-            footerEnabled: el.settingFooterEnabled.checked,
-            socialLinksEnabled: el.settingSocialLinksEnabled.checked,
-            footerShowYear: el.settingFooterShowYear.checked,
-            footerShowDeveloper: el.settingFooterShowDeveloper.checked
+            announcementEnabled: el.settingAnnouncementEnabled.checked
           };
-          el.adminContentFields.querySelectorAll("[data-setting-key]").forEach(function (input) {
+          el.adminSettingsForm.querySelectorAll("[data-setting-key]").forEach(function (input) {
             var key = input.getAttribute("data-setting-key");
             if (input.type === "checkbox") {
               payload[key] = input.checked;
@@ -2550,34 +3950,12 @@ import "./style.css";
             body: JSON.stringify(payload)
           });
           toast("Settings saved. Public pages will use them immediately.", "success");
-          await loadAdminDashboard();
+          await loadAdminSettingsTab();
         } catch (error) {
           toast(error.message || "Unable to save settings.", "error");
         } finally {
           el.adminSettingsSubmit.disabled = false;
           el.adminSettingsSubmit.textContent = "Save settings";
-        }
-      }
-
-      async function adminDeleteNote(itemId) {
-        if (!window.confirm("Delete this active note now?")) return;
-        try {
-          await adminFetch("/api/admin/item/" + encodeURIComponent(itemId), { method: "DELETE" });
-          toast("Note deleted.", "success");
-          await loadAdminDashboard();
-        } catch (error) {
-          toast(error.message || "Unable to delete note.", "error");
-        }
-      }
-
-      async function adminDeleteFile(fileId) {
-        if (!window.confirm("Delete this file now?")) return;
-        try {
-          await adminFetch("/api/admin/file/" + encodeURIComponent(fileId), { method: "DELETE" });
-          toast("File deleted.", "success");
-          await loadAdminDashboard();
-        } catch (error) {
-          toast(error.message || "Unable to delete file.", "error");
         }
       }
 
@@ -2588,7 +3966,7 @@ import "./style.css";
             headers: { "content-type": "application/json" },
             body: JSON.stringify({ status: status })
           });
-          await loadAdminDashboard();
+          await loadAdminInbox();
         } catch (error) {
           toast(error.message || "Unable to update feedback.", "error");
         }
@@ -2599,7 +3977,7 @@ import "./style.css";
         try {
           await adminFetch("/api/admin/feedback/" + encodeURIComponent(feedbackId), { method: "DELETE" });
           toast("Feedback deleted.", "success");
-          await loadAdminDashboard();
+          await loadAdminInbox();
         } catch (error) {
           toast(error.message || "Unable to delete feedback.", "error");
         }
@@ -2716,9 +4094,23 @@ import "./style.css";
         return Number.isNaN(date.getTime()) ? "Unknown date" : date.toLocaleString();
       }
 
+      function debounce(fn, wait) {
+        var timer = null;
+        return function () {
+          var args = arguments;
+          var self = this;
+          window.clearTimeout(timer);
+          timer = window.setTimeout(function () { fn.apply(self, args); }, wait);
+        };
+      }
+
       function updateCounters() {
-        el.titleCounter.textContent = el.shareTitle.value.length + " / " + APP.maxTitleLength;
-        el.textCounter.textContent = el.shareText.value.length.toLocaleString() + " / " + APP.maxTextLength.toLocaleString();
+        if (el.titleCounter && el.shareTitle) {
+          el.titleCounter.textContent = el.shareTitle.value.length + " / " + APP.maxTitleLength;
+        }
+        if (el.textCounter && el.shareText) {
+          el.textCounter.textContent = el.shareText.value.length.toLocaleString() + " / " + APP.maxTextLength.toLocaleString();
+        }
       }
 
       function resetCreateForm() {
@@ -3011,5 +4403,130 @@ import "./style.css";
         });
         if (el.drawer && el.drawer.classList.contains("open")) anyOpen = true;
         if (!anyOpen) document.documentElement.classList.remove("overflow-hidden");
+      }
+
+      /* --- V3-PLAN.md section 9 quick-win UX (Phase 7 remainder) --- */
+
+      // Landing-page quick-share card: a compact Text|Files toggle scoped to
+      // the hero card only -- deliberately separate from the old sitewide
+      // switchTab()/MAIN_TAB_NAMES system (which the new routed pages no
+      // longer use) so this can't interfere with any other page.
+      function activateQuickShareTab(name) {
+        var buttons = document.querySelectorAll('[data-action="quick-share-tab"]');
+        if (!buttons.length) return;
+        buttons.forEach(function (button) {
+          var active = button.getAttribute("data-quick-tab") === name;
+          button.classList.toggle("active", active);
+          button.setAttribute("aria-current", active ? "true" : "false");
+        });
+        document.querySelectorAll("[data-quick-tab-panel]").forEach(function (panel) {
+          panel.classList.toggle("hidden", panel.getAttribute("data-quick-tab-panel") !== name);
+        });
+      }
+
+      function activateHowItWorksTab(name) {
+        document.querySelectorAll('[data-action="how-it-works-tab"]').forEach(function (button) {
+          var active = button.getAttribute("data-how-tab") === name;
+          button.classList.toggle("active", active);
+          button.setAttribute("aria-current", active ? "true" : "false");
+        });
+        document.querySelectorAll("[data-how-tab-panel]").forEach(function (panel) {
+          panel.classList.toggle("hidden", panel.getAttribute("data-how-tab-panel") !== name);
+        });
+      }
+
+      // Live "N drops active on your Wi-Fi" strip -- GET /api/local/count
+      // already exists server-side (src/routes/notes.ts); only rendered
+      // when #wifi-live-count is present on the current page (home only).
+      function startWifiLiveCount() {
+        if (!el.wifiLiveCount) return;
+        fetchWifiLiveCount();
+        window.setInterval(fetchWifiLiveCount, 20000);
+      }
+
+      async function fetchWifiLiveCount() {
+        if (!el.wifiLiveCount) return;
+        try {
+          var response = await apiFetch("/api/local/count");
+          el.wifiLiveCount.textContent = String(response.count || 0);
+        } catch (error) {
+          // Silent -- a stale/absent count on a marketing strip isn't worth a toast.
+        }
+      }
+
+      // Expiry chooser (10 min / 1 hour / 1 day / default), clamped
+      // client-side to the viewer's effective ttlSeconds/fileTtlSeconds
+      // (already in boot data) -- options longer than the viewer's own
+      // limit are disabled since the server would clamp them anyway.
+      function populateExpiryChoosers() {
+        setExpiryOptionsLimit(el.createTtlSelect, APP.ttlSeconds);
+        setExpiryOptionsLimit(el.fileTtlSelect, APP.fileTtlSeconds || APP.ttlSeconds);
+      }
+
+      function setExpiryOptionsLimit(select, limitSeconds) {
+        if (!select) return;
+        Array.prototype.forEach.call(select.options, function (option) {
+          var value = Number(option.value);
+          if (value && limitSeconds && value > limitSeconds) {
+            option.disabled = true;
+          }
+        });
+      }
+
+      // Paste-anywhere: pasting outside a form field prefills + focuses the
+      // create-text form on whichever page has one (home's quick-share
+      // Text tab, or the standalone /text page).
+      function bindPasteAnywhere() {
+        document.addEventListener("paste", function (event) {
+          var active = document.activeElement;
+          var isFormField = active && (active.tagName === "INPUT" || active.tagName === "TEXTAREA" || active.isContentEditable);
+          if (isFormField) return;
+          if (!el.createForm || !el.shareText) return;
+          var text = event.clipboardData ? event.clipboardData.getData("text/plain") : "";
+          if (!text) return;
+          event.preventDefault();
+          activateQuickShareTab("text");
+          el.shareText.value = text;
+          updateCounters();
+          window.setTimeout(function () {
+            el.shareText.focus();
+            el.shareText.scrollIntoView({ behavior: "smooth", block: "center" });
+          }, 30);
+          toast("Pasted into the note.", "success");
+        });
+      }
+
+      // Drag-anywhere-to-upload: a file dropped anywhere on a page that has
+      // the upload form (home's quick-share Files tab, or /files) is routed
+      // into the same staged-files flow the drop zone itself uses.
+      function bindDragAnywhere() {
+        document.addEventListener("dragover", function (event) {
+          if (!el.fileInput) return;
+          event.preventDefault();
+        });
+        document.addEventListener("drop", function (event) {
+          if (!el.fileInput) return;
+          var dropped = event.dataTransfer && event.dataTransfer.files;
+          if (!dropped || !dropped.length) return;
+          event.preventDefault();
+          activateQuickShareTab("files");
+          el.fileInput.files = dropped;
+          renderStagedFiles();
+        });
+      }
+
+      // Web Share sheet on the post-create success/QR modal -- feature
+      // detected once; the button stays in the DOM (SHARED_MODALS) hidden
+      // by default and is only revealed where navigator.share exists.
+      function syncWebShareButtonVisibility() {
+        if (!el.webShareButton) return;
+        el.webShareButton.classList.toggle("hidden", typeof navigator.share !== "function");
+      }
+
+      function doWebShare() {
+        if (typeof navigator.share !== "function") return;
+        var url = el.qrLinkInput ? el.qrLinkInput.value : "";
+        var code = state.qrCode || "";
+        navigator.share({ title: "AirText share" + (code ? " " + code : ""), url: url }).catch(function () {});
       }
     })();

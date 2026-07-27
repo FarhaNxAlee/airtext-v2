@@ -4,3 +4,5 @@ dist/
 .dev.vars
 backups/
 *.log
+.claude/worktrees/
+.claude/settings.local.json

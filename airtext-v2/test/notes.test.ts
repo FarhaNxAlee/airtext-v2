@@ -176,3 +176,43 @@ describe("vanity share codes", () => {
     expect(response.status).toBe(409);
   }, 10_000);
 });
+
+describe("expiry chooser (ttlSeconds override)", () => {
+  it("honors a ttlSeconds override smaller than the effective limit", async () => {
+    const { response, body } = await createNote({ ttlSeconds: 600 });
+    expect(response.status).toBe(201);
+    const actualTtl = Math.round((body.item.expiresAt - body.item.createdAt) / 1000);
+    expect(actualTtl).toBe(600);
+  });
+
+  it("clamps a ttlSeconds override above the effective limit down to the limit", async () => {
+    const { response, body } = await createNote({ ttlSeconds: 999_999_999 });
+    expect(response.status).toBe(201);
+    const actualTtl = Math.round((body.item.expiresAt - body.item.createdAt) / 1000);
+    // Anonymous default ttlSeconds is 3600s (settings.ttlSeconds) -- the
+    // requested override must never exceed the caller's effective limit.
+    expect(actualTtl).toBeLessThanOrEqual(3600);
+  });
+
+  it("falls back to the default effective ttl when ttlSeconds is omitted", async () => {
+    const { response, body } = await createNote();
+    expect(response.status).toBe(201);
+    const actualTtl = Math.round((body.item.expiresAt - body.item.createdAt) / 1000);
+    expect(actualTtl).toBe(3600);
+  });
+});
+
+describe("GET /api/local/count", () => {
+  it("returns a numeric count that increases after creating a note", async () => {
+    const before = await SELF.fetch("https://example.com/api/local/count");
+    expect(before.status).toBe(200);
+    const beforeBody = (await before.json()) as { ok: boolean; count: number };
+    expect(beforeBody.ok).toBe(true);
+    expect(typeof beforeBody.count).toBe("number");
+
+    await createNote({ title: "Count me" });
+    const after = await SELF.fetch("https://example.com/api/local/count");
+    const afterBody = (await after.json()) as { count: number };
+    expect(afterBody.count).toBeGreaterThanOrEqual(beforeBody.count + 1);
+  });
+});

@@ -14,13 +14,17 @@ async function uploadFiles(
   if (overrides.pin) form.set("pin", overrides.pin);
   if (overrides.burnAfterRead) form.set("burnAfterRead", overrides.burnAfterRead);
   if (overrides.customCode) form.set("customCode", overrides.customCode);
+  if (overrides.ttlSeconds) form.set("ttlSeconds", overrides.ttlSeconds);
 
   const headers: Record<string, string> = {};
   if (cookie) headers.cookie = cookie;
   const response = await SELF.fetch("https://example.com/api/files", { method: "POST", body: form, headers });
   const body = (await response.json()) as {
     ok: boolean;
-    group: { id: string; code: string; fileCount: number; files: { id: string; filename: string; downloadUrl?: string }[] };
+    group: {
+      id: string; code: string; fileCount: number; createdAt: number; expiresAt: number;
+      files: { id: string; filename: string; downloadUrl?: string }[];
+    };
     deleteToken: string;
   };
   return { response, body };
@@ -177,4 +181,21 @@ describe("vanity share codes (files)", () => {
     expect(anonResponse.status).toBe(201);
     expect(anon.group.code).not.toBe("SHOULDNOTAPPLY");
   }, 10_000);
+});
+
+describe("expiry chooser (ttlSeconds override, files)", () => {
+  it("honors a ttlSeconds override smaller than the effective limit", async () => {
+    const { response, body } = await uploadFile({ ttlSeconds: "600" });
+    expect(response.status).toBe(201);
+    const actualTtl = Math.round((body.group.expiresAt - body.group.createdAt) / 1000);
+    expect(actualTtl).toBe(600);
+  });
+
+  it("clamps a ttlSeconds override above the effective limit down to the limit", async () => {
+    const { response, body } = await uploadFile({ ttlSeconds: "999999999" });
+    expect(response.status).toBe(201);
+    const actualTtl = Math.round((body.group.expiresAt - body.group.createdAt) / 1000);
+    // Anonymous default fileTtlSeconds is 3600s (settings.fileTtlSeconds).
+    expect(actualTtl).toBeLessThanOrEqual(3600);
+  });
 });
