@@ -54,8 +54,8 @@ function parsePartialLimits(json: string | null | undefined): Partial<EffectiveL
 const LIMITS_NUMERIC_RANGES: Record<string, [number, number]> = {
   ttlSeconds: [60, 30 * 24 * 60 * 60], // 1 minute .. 30 days
   maxTextLength: [100, 200_000], // matches ADMIN_LIMITS' ceiling
-  maxFileSizeMB: [1, 20], // above ADMIN_LIMITS' 500MB ceiling
-  maxBatchTotalMB: [1, 30], // above ADMIN_LIMITS' 5,000MB ceiling
+  maxFileSizeMB: [1, 20], // bounded multipart ingestion cap
+  maxBatchTotalMB: [1, 30], // bounded multipart ingestion cap
   maxFilesPerBatch: [1, 200], // above ADMIN_LIMITS' 100
   fileTtlSeconds: [60, 30 * 24 * 60 * 60],
 };

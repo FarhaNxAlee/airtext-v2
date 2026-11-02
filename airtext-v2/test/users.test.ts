@@ -132,7 +132,7 @@ describe("PATCH/DELETE /api/admin/users/:id", () => {
     expect(patchResponse.status).toBe(200);
 
     const row = await env.DB.prepare("SELECT custom_limits FROM users WHERE id = ?").bind(created.user.id).first<{ custom_limits: string }>();
-    expect(JSON.parse(row!.custom_limits).maxFileSizeMB).toBe(999);
+    expect(JSON.parse(row!.custom_limits).maxFileSizeMB).toBe(20); // bounded multipart ingestion cap
   });
 });
 
