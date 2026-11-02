@@ -15,7 +15,7 @@ It started as a single-file Cloudflare Worker (`airtext-worker-modern.js`, "V1" 
 - **Cloudflare Workers** (runtime) + **Hono** (routing, `src/index.ts` composes route modules with `app.route("/", xRoutes)`)
 - **D1** (SQLite) for all persistent data — mostly accessed via raw `env.DB.prepare(...)` for fidelity/control, though `src/db/schema.ts` has a hand-written Drizzle schema mirroring the migrations
 - **R2** for uploaded file bytes (`FILES_BUCKET` binding)
-- **KV** for rate-limit cooldown counters (`SHARE_KV` binding)
+- **D1** for atomic rate-limit cooldown claims; `SHARE_KV` is a reserved binding, currently unused
 - **Vite** builds the client (`client/main.js` + `client/style.css` + `client/copy.js`, Tailwind v4) into `dist/assets/*`, served via Workers Static Assets (`ASSETS` binding). **Important**: `npm run dev` only runs this build *once* at startup (`build:client && wrangler dev`) — it is not watched. Any edit to `client/*` requires `npx vite build` (or restarting `npm run dev`) before the browser sees it; editing `src/*.ts` alone does get picked up live by `wrangler dev`.
 - **Vanilla JS client** — no framework. DOM built by hand via `document.createElement`, a single global `data-action` click-delegation handler, a cached `el.*` object, an in-memory `state.*` object, and `window.__AIRTEXT_BOOT__` (server-injected boot data, aliased to `APP` in `main.js`)
 - **Vitest** + `@cloudflare/vitest-pool-workers` — tests run against the real Workers runtime (`SELF.fetch`, `env` from `cloudflare:test`), not mocks
@@ -49,7 +49,7 @@ src/
   middleware/
     auth.ts            Session cookie (__Host-airtext_session, HMAC-signed, exp+nonce), getSession(),
                        getAuthenticatedUser(), requireRole(maxRank), createSessionToken(), buildSessionCookie()
-    rateLimit.ts       enforceCooldown() — KV-backed per-key cooldown windows
+    rateLimit.ts       enforceCooldown() — D1-backed atomic per-key cooldown windows
     cleanup.ts         Expired-row cleanup helpers
   routes/
     notes.ts           Text note create/open/unlock/delete (anonymous + authenticated), GET /api/local/count
@@ -60,7 +60,7 @@ src/
     feedback.ts        Public feedback submission (also backs the /account "request an account" form)
     seo.ts             robots.txt / sitemap.xml
 client/
-  main.js              The entire client app (single IIFE, ~3500 lines) — see "Client architecture" below
+  main.js              The entire client app (single IIFE, ~5300 lines) — see "Client architecture" below
   copy.js              COPY object — micro-copy (nav labels, placeholders, badges, guide/FAQ strings)
                        that used to live in admin-editable settings; moved to code in the V3 settings cut
   style.css            Tailwind v4 + custom CSS (tier system, admin sidebar, drop cards, modals, etc.)
@@ -156,7 +156,7 @@ Admin-only ("/admin" backend, requireRole(...,0), mutations also require the x-a
 6. **Tier visual identity** — signed-in users get an avatar (initials + deterministic hue) with a rank-based ring (`Admin` gold, `Pro` violet, `Member` solid accent) and a matching badge, shown in the nav, `/account`, admin Users, and next to `sharedBy` on Nearby-list rows. Only Admin-owned rows get the extra card glow treatment.
 7. **Burn-after-reading, now "Open once"** — first *received* open deletes the row; the creator's own view never burns their own drop.
 8. **Vanity/custom share codes** — Pro/Member users (`allowCustomCode`) can pick their own code.
-9. **Client-side encryption** — for PIN-locked notes, if `allowClientEncryption` is set, the client derives an AES-GCM key from the PIN before the text leaves the browser.
+9. **Client-side encryption** — for PIN-locked notes, if `allowClientEncryption` is set, the browser explicitly encrypts text with a random AES-256-GCM key delivered in the link fragment, independently of the PIN. See `ENCRYPTION.md`.
 10. **"My Drops" dashboard** (`/account`, logged in) — avatar/role card, plan limits in plain English (not a raw key dump), drops list with inline copy-link/QR/delete, change-password form.
 11. **Admin panel** (`/admin`) — sidebar IA (Overview / Drops / Users / Inbox / Settings), trend-aware KPIs + a "needs attention" queue on Overview, a unified paginated/searchable/bulk-deletable Drops view (merges notes+files), a real per-field limits editor on Users, Inbox splitting general feedback from account requests (with an "Approve -> prefill create-account form" handoff), and a Settings page broken into sub-sections instead of one long form. Every mutating action writes to `audit_log` via `recordAudit()`.
 12. **PWA basics** — manifest + icon, paste-anywhere and drag-anywhere-to-share, Web Share API button in the post-create QR modal, client-side expiry chooser on create forms (server-clamped via an optional `ttlSeconds` field).
@@ -191,7 +191,7 @@ Both issue the same `__Host-airtext_session` cookie shape (HMAC-signed `{sub, ra
 Everything is one HMAC-SHA256 primitive (`hmacHex(secret, message)`) off a single `APP_SECRET`, with the *purpose* baked into a prefix on the message so the same secret+salt can never collide across uses:
 - `pin:${salt}:${pin}` — note/file-group PIN hashing
 - `password:${salt}:${password}` — user account passwords
-- `enc-key:${salt}:${pin}` — client-side encryption key derivation
+- `enc-key:${salt}:${pin}` — legacy unused helper; browser encryption uses a random key instead
 - delete-token and session-signing use their own analogous prefixes
 
 No bcrypt/scrypt — deliberate, to keep continuity with the original V1 pattern.
@@ -217,13 +217,13 @@ Single IIFE, no framework. Key structures:
 - **New pages**: add a content function in `src/html.ts` (`pageXContent()`), a case in `getMainContentForPath()`, an entry in `ROUTE_SEO`, and a route-recognition check in `src/index.ts`'s catch-all (`PUBLIC_CONTENT_ROUTES` or equivalent) — reuse the shared shell (`SITE_HEADER`/`SITE_FOOTER`/icon sprite), don't build a new one-off header.
 - **Client build step**: remember `client/*` changes need `npx vite build` before they're visible — `wrangler dev` does not watch/rebuild them.
 - **CSS specificity gotcha**: a `:has(#id.class)` selector carries the specificity of whatever's inside the parentheses, including IDs — this bit us once (a footer responsive-collapse rule got permanently overridden by a `:has()` rule with an ID inside it). If you add a conditional layout rule, check whether a `:has()` selector elsewhere could out-specificity it regardless of media query.
-- **Deploying**: `npm run deploy` builds the client then runs `wrangler deploy` — this touches the live production Worker and its real D1/R2/KV. Treat it as a risky/confirm-first action; the established discipline is backup → local verify (typecheck + `npx vitest run`) → apply any pending D1 migrations → deploy → smoke-check the live URL.
+- **Deploying**: `npm run deploy` builds the client then runs `wrangler deploy` — this touches the live production Worker and its real D1/R2/KV. Use the user-authorized release workflow in `DEPLOYMENT.md`; the established discipline is backup → local verify (typecheck + `npx vitest run`) → apply any pending D1 migrations → deploy → smoke-check the live URL.
 - **Schema changes**: write a new numbered migration file in `migrations/`, mirror it in `src/db/schema.ts`, and export a fresh D1 backup (`wrangler d1 export airtext --remote`) before applying to production.
 - **Local dev DB** (`wrangler dev` / `.claude/launch.json`'s `airtext-v2-dev` config) is a separate local D1 simulation from production — seed test users directly via `wrangler d1 execute DB --local --command "..."` when you need to manually verify a flow in the browser.
 
 ## Testing
 
-`npm run test` (or `npx vitest run`) runs the full suite against the real Workers runtime via `@cloudflare/vitest-pool-workers` — not against mocks. As of the last update: **97 tests across 10 files**, all passing (includes `test/html-routes.test.ts`, covering the new per-route SEO/rendering and the FAQPage JSON-LD). Login-related tests need ~3.1s delays between attempts in the same test file to clear the rate-limiter — follow that pattern for any new login-flow test rather than fighting the cooldown.
+`npm run test` (or `npx vitest run`) runs the full suite against the real Workers runtime via `@cloudflare/vitest-pool-workers` — not against mocks. As of the last update: **131 tests across 12 files**, all passing (includes `test/html-routes.test.ts`, covering the new per-route SEO/rendering and the FAQPage JSON-LD). Login-related tests need ~3.1s delays between attempts in the same test file to clear the rate-limiter — follow that pattern for any new login-flow test rather than fighting the cooldown.
 
 ## Known gaps / not yet done
 
@@ -239,3 +239,15 @@ Single IIFE, no framework. Key structures:
 - `V3-PLAN.md` (this folder) — the full V3 rewrite plan: phases, rationale, before/after settings-key lists, sequencing.
 - `../V2-PLAN.md` (one level up) — the original V1→V2 migration plan, for historical context.
 - Git log on this repo (`git log --oneline`) — every phase landed as its own commit with descriptive messages.
+
+## V3.1 implementation
+
+Release docs: `DEPLOYMENT.md`. Encryption protocol and limits: `ENCRYPTION.md`.
+- Current-account role/status and `session_version` gate every session; password/role/status changes revoke old cookies.
+- Open once/ encrypted notes stay off Nearby. Recipient note consumption is atomic; each file can be downloaded once, with owner-scoped capabilities bypassing consumption.
+- Audit snapshots exclude bodies/secrets; migration 0005 redacts historical note snapshots. Cron runs every 5 minutes and retains R2 deletion retry keys.
+- The client adds `features.js` and `encryption.js` for recent browser history, a unified Nearby board, smart text tools, media previews, ZIP downloads, upload progress and browser encryption.
+- The Workers Vitest plugin matches the configured compatibility date. Tests explicitly reset storage before each test and seed fixtures per test.
+- CI runs type checks, runtime tests, builds and browser scenarios. Release scripts require a clean commit and stamp its SHA in `/api/health`.
+- Production and staging have independent D1/R2/KV/secrets. Never point staging at production storage.
+- Uploads are capped at 20 MB/file, 30 MB/batch across all roles until streaming multipart ingestion is implemented.

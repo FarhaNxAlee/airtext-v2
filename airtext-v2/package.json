@@ -1,19 +1,23 @@
 {
   "name": "airtext-v2",
-  "version": "0.1.0",
+  "version": "3.1.0",
   "private": true,
   "type": "module",
   "scripts": {
     "dev": "npm run build:client && wrangler dev",
     "build:client": "vite build",
-    "deploy": "npm run build:client && wrangler deploy",
+    "deploy": "npm run check && node scripts/deploy.mjs",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.client.json && tsc --noEmit -p tsconfig.node.json",
     "db:generate": "drizzle-kit generate",
     "db:migrate:local": "wrangler d1 migrations apply DB --local",
     "db:migrate:remote": "wrangler d1 migrations apply DB --remote",
     "db:studio": "drizzle-kit studio",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "test:e2e": "playwright test",
+    "check": "npm run typecheck && npm test && npm run build:client",
+    "types": "wrangler types --include-runtime=false --env-interface WorkerBindings",
+    "deploy:staging": "npm run check && node scripts/deploy.mjs --staging"
   },
   "dependencies": {
     "drizzle-orm": "^0.45.4",

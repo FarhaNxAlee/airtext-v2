@@ -15,10 +15,10 @@ A temporary text and file sharing web app — create a **drop** (a note or a fil
 - Anonymous, no-account text and file sharing — create a drop, share a code/link/QR, it expires automatically
 - Optional PIN protection, "open once" (deletes itself the instant it's opened), and custom/vanity share codes
 - Multi-file batch uploads under a single share code
-- Accounts with three tiers — **Admin**, **Pro**, **Member** — each with configurable limits (retention time, file size caps, batch size, custom codes, client-side encryption)
+- Accounts with three tiers — **Admin**, **Pro**, **Member** — each with configurable limits (retention time, file size caps, batch size, custom codes, browser encryption)
 - A "Nearby" view of everything currently shared on your Wi-Fi, and a "My Drops" dashboard for signed-in users
 - A full admin panel — usage overview with trends, a unified searchable/paginated view of all drops, user management, a feedback/account-request inbox, site settings, and an audit log
-- Client-side AES-GCM encryption available for PIN-locked notes, on top of PIN/password hashing that's all HMAC-SHA256 off a single server secret (no raw secrets ever stored)
+- Optional browser AES-256-GCM text encryption with a random key carried in the complete share link, on top of PIN/password hashing that's all HMAC-SHA256 off a single server secret (no raw secrets ever stored)
 - A PWA manifest, paste-anywhere and drag-anywhere sharing, and a Web Share API button on mobile
 
 ## Tech stack
