@@ -304,6 +304,14 @@ adminRoutes.delete("/api/admin/item/:itemId", async (c) => {
   return jsonResponse({ ok: true, message: "Note deleted." });
 });
 
+adminRoutes.get("/api/admin/file/:fileId", async (c) => {
+  const authError = await requireAdmin(c.req.raw,c.env);
+  if (authError) return authError;
+  const group = await getGroupById(c.env,c.req.param("fileId"));
+  if (!group) return jsonError("Drop not found.",404,"NOT_FOUND");
+  return jsonResponse(await publicGroupPayload(c.env,group,await getFilesForGroup(c.env,group.id),true,true));
+});
+
 adminRoutes.patch("/api/admin/file/:fileId", async (c) => {
   const env = c.env;
   const authError = await requireAdmin(c.req.raw, env, true);

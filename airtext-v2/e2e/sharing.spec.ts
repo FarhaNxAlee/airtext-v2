@@ -79,7 +79,12 @@ test("encrypted creation sends ciphertext and complete links decrypt in a separa
   await page.locator('#qr-modal [data-action="close-qr-modal"]').first().click();
   await page.locator("#recent-drops summary").click();
   await page.locator("#recent-drops").getByRole("button",{name:"Open",exact:true}).first().click();
+  await page.route("**/api/item/*", async route => {
+    if(route.request().method() === "GET") await new Promise(resolve=>setTimeout(resolve,250));
+    await route.continue();
+  });
   await page.locator('#item-modal [data-action="open-edit-item-modal"]').click();
+  await expect(page.locator("#edit-item-text")).toBeDisabled();
   await page.locator("#edit-item-text").fill(plaintext + " edited");
   await page.locator("#edit-item-submit").click();
   await expect(page.locator("#edit-item-modal")).toBeHidden();

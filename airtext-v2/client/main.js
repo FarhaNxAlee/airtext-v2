@@ -1501,16 +1501,16 @@ import { rememberDrop, recentDrops, forgetDrop, renderRecentDrops, renderNearbyB
        *  protect against silently clearing an existing PIN or burn flag. */
 
       async function applyItemEditPrefill(item) {
+        var prefillTarget = state.editTarget;
         if (item && state.editTarget) {
           state.editTarget.encrypted = Boolean(item.encrypted);
           state.editTarget.code = item.code;
-          el.editItemText.disabled = false;
           if (item.encrypted) {
             if (keyForCode(item.code)) item = await decryptItem(item, item.code);
             else { el.editItemText.disabled = true; item = Object.assign({}, item, { text: undefined }); el.editItemText.placeholder = "The original encrypted link is required to edit this text. You can still change its metadata."; }
           }
         }
-        if (!item) return;
+        if (!item || state.editTarget !== prefillTarget) return;
         if (typeof item.title === "string") el.editItemTitle.value = item.title;
         if (typeof item.text === "string") el.editItemText.value = item.text;
         if (typeof item.locked === "boolean") {
@@ -1518,6 +1518,11 @@ import { rememberDrop, recentDrops, forgetDrop, renderRecentDrops, renderNearbyB
           if (el.editItemPinFieldWrap) el.editItemPinFieldWrap.classList.toggle("hidden", !item.locked);
         }
         if (typeof item.burnAfterRead === "boolean") el.editItemBurnToggle.checked = item.burnAfterRead;
+      }
+
+      function setEditorLoading(form, loading) {
+        form.setAttribute("aria-busy", String(loading));
+        Array.from(form.elements).forEach(function (control) { control.disabled = loading; });
       }
 
       async function openEditItemModal(itemId, tier, prefillData) {
@@ -1540,16 +1545,21 @@ import { rememberDrop, recentDrops, forgetDrop, renderRecentDrops, renderNearbyB
         el.editItemModal.setAttribute("aria-hidden", "false");
         lockBodyScroll();
 
-        if (tier === "admin") {
-          try { var adminDetail = await adminFetch("/api/admin/item/" + encodeURIComponent(itemId)); await applyItemEditPrefill(adminDetail.item); } catch (error) {toast(error.message,"error");}
-        }
-        if (tier === "owner" || tier === "anonymous") {
-          try {
-            var response = await apiFetch(tier === "owner" ? "/api/me/shares/notes/" + encodeURIComponent(itemId) : "/api/item/" + encodeURIComponent(itemId), { headers: tier === "anonymous" ? { "x-airtext-owner": getDeleteToken(itemId) } : {} });
-            await applyItemEditPrefill(response.item);
-          } catch (error) {
-            toast(error.message || "Unable to load this note for editing.", "error");
-          }
+        var loadingTarget = state.editTarget;
+        setEditorLoading(el.editItemForm, true);
+        try {
+          var response = tier === "admin"
+            ? await adminFetch("/api/admin/item/" + encodeURIComponent(itemId))
+            : await apiFetch(tier === "owner" ? "/api/me/shares/notes/" + encodeURIComponent(itemId) : "/api/item/" + encodeURIComponent(itemId), { headers: tier === "anonymous" ? { "x-airtext-owner": getDeleteToken(itemId) } : {} });
+          if (state.editTarget !== loadingTarget) return;
+          await applyItemEditPrefill(response.item);
+          if (state.editTarget !== loadingTarget) return;
+          setEditorLoading(el.editItemForm, false);
+          el.editItemText.disabled = Boolean(loadingTarget.encrypted && !keyForCode(loadingTarget.code));
+        } catch (error) {
+          if (state.editTarget !== loadingTarget) return;
+          el.editItemError.textContent = error.message || "Unable to load this note. Close and try again.";
+          el.editItemError.classList.remove("hidden");
         }
       }
 
@@ -1746,13 +1756,19 @@ import { rememberDrop, recentDrops, forgetDrop, renderRecentDrops, renderNearbyB
         el.editFileModal.setAttribute("aria-hidden", "false");
         lockBodyScroll();
 
-        if (tier === "owner" || tier === "anonymous") {
-          try {
-            var response = await apiFetch(tier === "owner" ? "/api/me/shares/files/" + encodeURIComponent(groupId) : "/api/file/" + encodeURIComponent(groupId), {headers:tier === "anonymous" ? {"x-airtext-owner":getDeleteToken("file:" + groupId)} : {}});
-            applyFileEditPrefill(response.group);
-          } catch (error) {
-            toast(error.message || "Unable to load this file share for editing.", "error");
-          }
+        var loadingTarget = state.editTarget;
+        setEditorLoading(el.editFileForm, true);
+        try {
+          var response = tier === "admin"
+            ? await adminFetch("/api/admin/file/" + encodeURIComponent(groupId))
+            : await apiFetch(tier === "owner" ? "/api/me/shares/files/" + encodeURIComponent(groupId) : "/api/file/" + encodeURIComponent(groupId), {headers:tier === "anonymous" ? {"x-airtext-owner":getDeleteToken("file:" + groupId)} : {}});
+          if (state.editTarget !== loadingTarget) return;
+          applyFileEditPrefill(response.group);
+          setEditorLoading(el.editFileForm, false);
+        } catch (error) {
+          if (state.editTarget !== loadingTarget) return;
+          el.editFileError.textContent = error.message || "Unable to load this drop. Close and try again.";
+          el.editFileError.classList.remove("hidden");
         }
       }
 
