@@ -1,8 +1,10 @@
-import { applyD1Migrations, env } from "cloudflare:test";
-import { beforeAll } from "vitest";
+import { applyD1Migrations, env, reset } from "cloudflare:test";
+import { beforeEach } from "vitest";
+import { clearSiteSettingsCache } from "../src/lib/settings";
 
-declare module "cloudflare:test" {
-  interface ProvidedEnv {
+declare global {
+  namespace Cloudflare {
+  interface Env {
     DB: D1Database;
     FILES_BUCKET: R2Bucket;
     SHARE_KV: KVNamespace;
@@ -10,8 +12,11 @@ declare module "cloudflare:test" {
     APP_SECRET: string;
     TEST_MIGRATIONS: Parameters<typeof applyD1Migrations>[1];
   }
+  }
 }
 
-beforeAll(async () => {
+beforeEach(async () => {
+  await reset();
+  clearSiteSettingsCache();
   await applyD1Migrations(env.DB, env.TEST_MIGRATIONS);
 });

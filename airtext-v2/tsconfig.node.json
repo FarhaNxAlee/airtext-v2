@@ -1,10 +1,16 @@
 {
   "compilerOptions": {
     "target": "ES2022",
-    "lib": ["ES2022"],
+    "lib": [
+      "ES2022"
+    ],
     "module": "ES2022",
     "moduleResolution": "Bundler",
-    "types": ["node", "@cloudflare/workers-types", "@cloudflare/vitest-pool-workers"],
+    "types": [
+      "node",
+      "@cloudflare/workers-types",
+      "@cloudflare/vitest-plugin/types"
+    ],
     "strict": true,
     "skipLibCheck": true,
     "esModuleInterop": true,
@@ -13,5 +19,10 @@
     "noUnusedParameters": true,
     "noEmit": true
   },
-  "include": ["test", "vitest.config.ts", "drizzle.config.ts"]
+  "include": [
+    "test",
+    "vitest.config.ts",
+    "drizzle.config.ts",
+    "worker-configuration.d.ts"
+  ]
 }

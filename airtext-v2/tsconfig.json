@@ -1,10 +1,14 @@
 {
   "compilerOptions": {
     "target": "ES2022",
-    "lib": ["ES2022"],
+    "lib": [
+      "ES2022"
+    ],
     "module": "ES2022",
     "moduleResolution": "Bundler",
-    "types": ["@cloudflare/workers-types"],
+    "types": [
+      "@cloudflare/workers-types"
+    ],
     "strict": true,
     "skipLibCheck": true,
     "esModuleInterop": true,
@@ -13,5 +17,8 @@
     "noUnusedParameters": true,
     "noEmit": true
   },
-  "include": ["src"]
+  "include": [
+    "src",
+    "worker-configuration.d.ts"
+  ]
 }

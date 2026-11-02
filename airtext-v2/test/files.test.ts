@@ -1,5 +1,5 @@
 import { SELF, env } from "cloudflare:test";
-import { describe, it, expect, beforeAll } from "vitest";
+import { describe, it, expect, beforeEach } from "vitest";
 import { hashPassword, randomBase64Url } from "../src/lib/crypto";
 
 async function uploadFiles(
@@ -33,7 +33,7 @@ async function uploadFiles(
 const FILES_TEST_PRO_EMAIL = "files-test-pro@test.local";
 const FILES_TEST_PRO_PASSWORD = "files-test-pro-password";
 
-beforeAll(async () => {
+beforeEach(async () => {
   const proRole = await env.DB.prepare("SELECT id FROM roles WHERE rank = 2").first<{ id: number }>();
   const salt = randomBase64Url(16);
   const passwordHash = await hashPassword(env.APP_SECRET, salt, FILES_TEST_PRO_PASSWORD);
@@ -46,7 +46,6 @@ beforeAll(async () => {
 });
 
 async function loginAsFilesPro() {
-  await new Promise((resolve) => setTimeout(resolve, 3100)); // login rate limit
   const response = await SELF.fetch("https://example.com/api/auth/login", {
     method: "POST",
     headers: { "content-type": "application/json" },

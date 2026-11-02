@@ -1,11 +1,11 @@
 import { SELF, env } from "cloudflare:test";
-import { describe, it, expect, beforeAll, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach } from "vitest";
 import { hashPassword, randomBase64Url } from "../src/lib/crypto";
 
 const ADMIN_EMAIL = "users-test-admin@test.local";
 const ADMIN_PASSWORD = "users-test-admin-password";
 
-beforeAll(async () => {
+beforeEach(async () => {
   const adminRole = await env.DB.prepare("SELECT id FROM roles WHERE rank = 0").first<{ id: number }>();
   const salt = randomBase64Url(16);
   const passwordHash = await hashPassword(env.APP_SECRET, salt, ADMIN_PASSWORD);
@@ -17,9 +17,6 @@ beforeAll(async () => {
     .run();
 });
 
-beforeEach(async () => {
-  await new Promise((resolve) => setTimeout(resolve, 3100)); // admin login rate limit
-});
 
 async function login() {
   const response = await SELF.fetch("https://example.com/api/admin/login", {

@@ -5,9 +5,10 @@
   // versions of these by default — only `wrangler deploy` touches production.
   "name": "air4share",
   "main": "src/index.ts",
-  "compatibility_date": "2026-07-24",
+  "compatibility_date": "2026-11-02",
   "account_id": "1bda1bde506a5819776160299196e802",
   "preview_urls": false,
+  "secrets": { "required": ["APP_SECRET"] },
   "triggers": { "crons": ["*/5 * * * *"] },
   "observability": {
     "enabled": true,

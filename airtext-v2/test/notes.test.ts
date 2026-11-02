@@ -1,5 +1,5 @@
 import { SELF, env } from "cloudflare:test";
-import { describe, it, expect, beforeAll } from "vitest";
+import { describe, it, expect, beforeEach } from "vitest";
 import { hashPassword, randomBase64Url } from "../src/lib/crypto";
 
 async function createNote(overrides: Record<string, unknown> = {}, cookie?: string) {
@@ -17,7 +17,7 @@ async function createNote(overrides: Record<string, unknown> = {}, cookie?: stri
 const VANITY_TEST_EMAIL = "notes-test-pro@test.local";
 const VANITY_TEST_PASSWORD = "notes-test-pro-password";
 
-beforeAll(async () => {
+beforeEach(async () => {
   const proRole = await env.DB.prepare("SELECT id FROM roles WHERE rank = 2").first<{ id: number }>();
   const salt = randomBase64Url(16);
   const passwordHash = await hashPassword(env.APP_SECRET, salt, VANITY_TEST_PASSWORD);
@@ -30,7 +30,6 @@ beforeAll(async () => {
 });
 
 async function loginAsPro() {
-  await new Promise((resolve) => setTimeout(resolve, 3100)); // login rate limit
   const response = await SELF.fetch("https://example.com/api/auth/login", {
     method: "POST",
     headers: { "content-type": "application/json" },

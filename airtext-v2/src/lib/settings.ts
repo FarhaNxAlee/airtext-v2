@@ -171,3 +171,5 @@ export function setSiteSettingsCache(settings: SiteSettings): void {
   settingsCache = settings;
   settingsCacheExpiresAt = Date.now() + 15_000;
 }
+
+export function clearSiteSettingsCache(): void { settingsCache = null; settingsCacheExpiresAt = 0; }

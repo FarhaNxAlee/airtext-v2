@@ -1,11 +1,11 @@
 import { SELF, env } from "cloudflare:test";
-import { describe, it, expect, beforeAll, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach } from "vitest";
 import { hashPassword, randomBase64Url } from "../src/lib/crypto";
 
 const PRO_EMAIL = "me-test-pro@test.local";
 const PRO_PASSWORD = "me-test-pro-password";
 
-beforeAll(async () => {
+beforeEach(async () => {
   const proRole = await env.DB.prepare("SELECT id FROM roles WHERE rank = 2").first<{ id: number }>();
   const salt = randomBase64Url(16);
   const passwordHash = await hashPassword(env.APP_SECRET, salt, PRO_PASSWORD);
@@ -17,9 +17,6 @@ beforeAll(async () => {
     .run();
 });
 
-beforeEach(async () => {
-  await new Promise((resolve) => setTimeout(resolve, 3100)); // login rate limit
-});
 
 async function login() {
   const response = await SELF.fetch("https://example.com/api/auth/login", {
@@ -224,7 +221,7 @@ describe("PATCH /api/me/password", () => {
   const PW_EMAIL = "me-test-pwchange@test.local";
   const PW_PASSWORD = "me-test-pwchange-password";
 
-  beforeAll(async () => {
+  beforeEach(async () => {
     const proRole = await env.DB.prepare("SELECT id FROM roles WHERE rank = 2").first<{ id: number }>();
     const salt = randomBase64Url(16);
     const passwordHash = await hashPassword(env.APP_SECRET, salt, PW_PASSWORD);

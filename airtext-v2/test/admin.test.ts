@@ -1,11 +1,11 @@
 import { SELF, env } from "cloudflare:test";
-import { describe, it, expect, beforeEach, beforeAll } from "vitest";
+import { describe, it, expect, beforeEach } from "vitest";
 import { hashPassword, randomBase64Url } from "../src/lib/crypto";
 
 const TEST_ADMIN_EMAIL = "admin@test.local";
 const TEST_ADMIN_PASSWORD = "test-admin-password";
 
-beforeAll(async () => {
+beforeEach(async () => {
   const adminRole = await env.DB.prepare("SELECT id FROM roles WHERE rank = 0").first<{ id: number }>();
   const salt = randomBase64Url(16);
   const passwordHash = await hashPassword(env.APP_SECRET, salt, TEST_ADMIN_PASSWORD);
@@ -29,9 +29,6 @@ async function login(email = TEST_ADMIN_EMAIL, password = TEST_ADMIN_PASSWORD) {
 
 // admin login is rate-limited to 1 attempt / 3s per client -- give each test
 // a moment so they don't trip on each other's cooldown window.
-beforeEach(async () => {
-  await new Promise((resolve) => setTimeout(resolve, 3100));
-});
 
 describe("POST /api/admin/login", () => {
   it("rejects an incorrect password", async () => {
