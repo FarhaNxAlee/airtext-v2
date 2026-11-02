@@ -205,6 +205,11 @@ usersRoutes.patch("/api/admin/users/:userId", async (c) => {
     const roleId = Number(body.data.roleId);
     const role = await env.DB.prepare("SELECT id FROM roles WHERE id = ?").bind(roleId).first();
     if (!role) return jsonError("Unknown role.", 400, "UNKNOWN_ROLE");
+    const targetRank = await env.DB.prepare("SELECT rank FROM roles WHERE id = ?").bind(roleId).first<{ rank: number }>();
+    if (current.rank === 0 && targetRank?.rank !== 0) {
+      const others = await env.DB.prepare("SELECT COUNT(*) AS count FROM users u JOIN roles r ON r.id=u.role_id WHERE r.rank=0 AND u.status='active' AND u.id != ?").bind(userId).first<{count:number}>();
+      if (!others?.count) return jsonError("Cannot demote the only active admin account.", 400, "LAST_ADMIN");
+    }
     updates.push("role_id = ?");
     values.push(roleId);
     changedFields.push("roleId");
@@ -249,6 +254,7 @@ usersRoutes.patch("/api/admin/users/:userId", async (c) => {
 
   if (!updates.length) return jsonError("No changes provided.", 400, "NO_CHANGES");
 
+  if (changedFields.some((field) => ["password", "roleId", "status"].includes(field))) updates.push("session_version = session_version + 1");
   await env.DB.prepare(`UPDATE users SET ${updates.join(", ")} WHERE id = ?`)
     .bind(...values, userId)
     .run();

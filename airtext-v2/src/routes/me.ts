@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import type { Env } from "../types";
 import { CONFIG } from "../lib/config";
-import { jsonResponse, jsonError, readJsonBody } from "../lib/http";
+import { jsonResponse, jsonError, readJsonBody, readMultipartBody } from "../lib/http";
 import { hashPassword, constantTimeEqual, randomBase64Url } from "../lib/crypto";
 import { getClientIpHash, getAuthenticatedUser, getRoomId, createSessionToken, buildSessionCookie } from "../middleware/auth";
 import { enforceCooldown } from "../middleware/rateLimit";
@@ -28,6 +28,7 @@ interface UserAuthRow {
   id: string;
   password_salt: string;
   password_hash: string;
+  session_version: number;
   status: string;
   rank: number;
 }
@@ -57,7 +58,7 @@ meRoutes.post("/api/auth/login", async (c) => {
   }
 
   const row = await env.DB.prepare(
-    `SELECT u.id, u.password_salt, u.password_hash, u.status, r.rank
+    `SELECT u.id, u.password_salt, u.password_hash, u.session_version, u.status, r.rank
      FROM users u JOIN roles r ON r.id = u.role_id
      WHERE u.email = ?`,
   )
@@ -74,7 +75,7 @@ meRoutes.post("/api/auth/login", async (c) => {
     return jsonError("Incorrect email or password.", 401, "INVALID_CREDENTIALS");
   }
 
-  const token = await createSessionToken(env.APP_SECRET, row.id, row.rank);
+  const token = await createSessionToken(env.APP_SECRET, row.id, row.rank, row.session_version);
   await env.DB.prepare("UPDATE users SET last_login_at = ? WHERE id = ?").bind(Date.now(), row.id).run();
   await recordEvent(env, c.req.raw, "user_login");
   return jsonResponse(
@@ -165,11 +166,11 @@ meRoutes.patch("/api/me/password", async (c) => {
 
   const newSalt = randomBase64Url(16);
   const newHash = await hashPassword(env.APP_SECRET, newSalt, newPassword);
-  await env.DB.prepare("UPDATE users SET password_salt = ?, password_hash = ? WHERE id = ?")
+  await env.DB.prepare("UPDATE users SET password_salt = ?, password_hash = ?, session_version = session_version + 1 WHERE id = ?")
     .bind(newSalt, newHash, user.id)
     .run();
   await recordEvent(env, c.req.raw, "user_password_changed");
-  return jsonResponse({ ok: true, message: "Password updated." });
+  return jsonResponse({ ok: true, message: "Password updated. Sign in again to continue." }, 200, { "set-cookie": buildSessionCookie("", 0) });
 });
 
 meRoutes.get("/api/me/shares/notes/:noteId", async (c) => {
@@ -216,7 +217,7 @@ meRoutes.get("/api/me/shares/files/:groupId", async (c) => {
   const group = await getGroupById(env, c.req.param("groupId"));
   if (!group || group.userId !== user.id) return jsonError("File not found.", 404, "NOT_FOUND");
   const files = await getFilesForGroup(env, group.id);
-  return jsonResponse(await publicGroupPayload(env, group, files, true));
+  return jsonResponse(await publicGroupPayload(env, group, files, true, true));
 });
 
 meRoutes.patch("/api/me/shares/files/:groupId", async (c) => {
@@ -225,12 +226,9 @@ meRoutes.patch("/api/me/shares/files/:groupId", async (c) => {
   if (!user) return jsonError("Sign in to manage your shares.", 401, "AUTH_REQUIRED");
   const group = await getGroupById(env, c.req.param("groupId"));
   if (!group || group.userId !== user.id) return jsonError("File not found.", 404, "NOT_FOUND");
-  let form: FormData;
-  try {
-    form = await c.req.raw.formData();
-  } catch {
-    return jsonError("Could not read the request. Please try again.", 400, "INVALID_UPLOAD");
-  }
+  const multipart = await readMultipartBody(c.req.raw);
+  if (!multipart.ok) return multipart.response;
+  const form = multipart.data;
   const settings = await getSiteSettings(env);
   const limits = await getEffectiveLimits(env, user);
   const existingFiles = await getFilesForGroup(env, group.id);

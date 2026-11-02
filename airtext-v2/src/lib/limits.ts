@@ -26,8 +26,8 @@ export interface EffectiveLimits {
 const ADMIN_LIMITS: EffectiveLimits = {
   ttlSeconds: 30 * 24 * 60 * 60,
   maxTextLength: 200_000,
-  maxFileSizeMB: 500,
-  maxBatchTotalMB: 5_000,
+  maxFileSizeMB: 20,
+  maxBatchTotalMB: 30,
   maxFilesPerBatch: 100,
   fileTtlSeconds: 30 * 24 * 60 * 60,
   allowCustomCode: true,
@@ -104,12 +104,15 @@ export async function getEffectiveLimits(env: Env, user?: AuthenticatedUser | nu
     allowClientEncryption: false,
   };
 
+  anonymous.maxFileSizeMB = Math.min(20, anonymous.maxFileSizeMB);
+  anonymous.maxBatchTotalMB = Math.min(30, anonymous.maxBatchTotalMB);
   if (!user) return anonymous;
   if (user.rank === 0) return ADMIN_LIMITS;
 
-  return {
+  const merged = {
     ...anonymous,
     ...parsePartialLimits(user.roleDefaultLimits),
     ...parsePartialLimits(user.customLimits),
   };
+  return { ...merged, maxFileSizeMB: Math.min(20, merged.maxFileSizeMB), maxBatchTotalMB: Math.min(30, merged.maxBatchTotalMB) };
 }

@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import type { Env } from "./types";
-import { maybeCleanupD1 } from "./middleware/cleanup";
+import { maybeCleanupD1, cleanupD1 } from "./middleware/cleanup";
 import { notesRoutes } from "./routes/notes";
 import { filesRoutes } from "./routes/files";
 import { feedbackRoutes } from "./routes/feedback";
@@ -188,4 +188,10 @@ app.onError((error, c) => {
   return new Response(renderRuntimeErrorPage(), { status: 500, headers: HTML_HEADERS });
 });
 
-export default app;
+export default {
+  fetch: app.fetch,
+  async scheduled(_event: ScheduledController, env: Env, ctx: ExecutionContext) {
+    ctx.waitUntil(cleanupD1(env));
+  },
+} satisfies ExportedHandler<Env>;
+

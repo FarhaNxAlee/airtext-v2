@@ -10,7 +10,7 @@ async function createNote(overrides: Record<string, unknown> = {}, cookie?: stri
     headers,
     body: JSON.stringify({ title: "Test note", text: "Hello world", ...overrides }),
   });
-  const body = (await response.json()) as { ok: boolean; item: { id: string; code: string }; deleteToken: string };
+  const body = (await response.json()) as { ok: boolean; item: { id: string; code: string; createdAt: number; expiresAt: number }; deleteToken: string };
   return { response, body };
 }
 
@@ -234,11 +234,13 @@ describe("burn-after-read", () => {
     expect(secondOpen.status).toBe(404);
   });
 
-  it("does not burn the creator's own local-board view", async () => {
+  it("keeps Open once off Nearby while permitting a creator-token owner view", async () => {
     const { body: created } = await createNote({ burnAfterRead: true });
     const localOpen = await SELF.fetch(`https://example.com/api/local/item/${created.item.id}`);
-    expect(localOpen.status).toBe(200);
-    const stillThere = await SELF.fetch(`https://example.com/api/local/item/${created.item.id}`);
+    expect(localOpen.status).toBe(404);
+    const ownerOpen = await SELF.fetch(`https://example.com/api/item/${created.item.id}`, { headers: { "x-airtext-owner": created.deleteToken } });
+    expect(ownerOpen.status).toBe(200);
+    const stillThere = await SELF.fetch(`https://example.com/api/share/${created.item.code}`);
     expect(stillThere.status).toBe(200);
   });
 });

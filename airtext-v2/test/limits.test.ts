@@ -22,7 +22,7 @@ describe("getEffectiveLimits", () => {
       roleDefaultLimits: "{}",
       customLimits: JSON.stringify({ maxFileSizeMB: 1 }),
     });
-    expect(limits.maxFileSizeMB).toBe(500);
+    expect(limits.maxFileSizeMB).toBe(20);
     expect(limits.allowCustomCode).toBe(true);
   });
 
@@ -53,7 +53,7 @@ describe("getEffectiveLimits", () => {
       roleDefaultLimits: JSON.stringify({ maxFileSizeMB: 5, maxBatchTotalMB: 50 }),
       customLimits: JSON.stringify({ maxFileSizeMB: 999 }),
     });
-    expect(limits.maxFileSizeMB).toBe(999); // custom override wins
-    expect(limits.maxBatchTotalMB).toBe(50); // role default still applies where no override exists
+    expect(limits.maxFileSizeMB).toBe(20); // platform-safe cap applies to custom overrides
+    expect(limits.maxBatchTotalMB).toBe(30); // batch buffering is bounded for every role
   });
 });

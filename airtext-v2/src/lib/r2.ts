@@ -33,18 +33,32 @@ export async function getTotalFileStorageBytes(env: Env): Promise<number> {
   return Number(row?.total || 0);
 }
 
-export async function createFileDownloadToken(secret: string, fileId: string, expiresAt: number): Promise<string> {
-  const signature = await hmacHex(secret, `file-download:${fileId}:${expiresAt}`);
+export async function createFileDownloadToken(secret: string, fileId: string, expiresAt: number, owner = false): Promise<string> {
+  const signature = await hmacHex(secret, `${owner ? "owner-download" : "file-download"}:${fileId}:${expiresAt}`);
   return `${expiresAt}.${signature}`;
 }
 
-export async function verifyFileDownloadToken(secret: string, fileId: string, token: string): Promise<boolean> {
+export async function verifyFileDownloadToken(secret: string, fileId: string, token: string, owner = false): Promise<boolean> {
   const raw = String(token || "");
   const dot = raw.indexOf(".");
   if (dot <= 0) return false;
   const expiresAt = Number(raw.slice(0, dot));
   const signature = raw.slice(dot + 1);
   if (!Number.isFinite(expiresAt) || expiresAt < Date.now()) return false;
-  const expected = await hmacHex(secret, `file-download:${fileId}:${expiresAt}`);
+  const expected = await hmacHex(secret, `${owner ? "owner-download" : "file-download"}:${fileId}:${expiresAt}`);
   return constantTimeEqual(signature, expected);
+}
+
+/** Persist intent before deleting; a transient R2 failure never loses its retry key. */
+export async function deleteObjectsReliably(env: Env, keys: string[]): Promise<void> {
+  if (!keys.length) return;
+  await env.DB.batch(keys.map((key) => env.DB.prepare("INSERT OR IGNORE INTO object_deletions (r2_key, created_at) VALUES (?, ?)").bind(key, Date.now())));
+  if (!env.FILES_BUCKET) return;
+  try {
+    await env.FILES_BUCKET.delete(keys);
+    await env.DB.batch(keys.map((key) => env.DB.prepare("DELETE FROM object_deletions WHERE r2_key = ?").bind(key)));
+  } catch (error) {
+    console.warn("Object deletion queued for retry", { count: keys.length, error: String(error) });
+    await env.DB.batch(keys.map((key) => env.DB.prepare("UPDATE object_deletions SET attempts = attempts + 1 WHERE r2_key = ?").bind(key)));
+  }
 }

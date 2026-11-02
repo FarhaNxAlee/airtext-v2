@@ -1465,7 +1465,7 @@ function pagePrivacyContent(): string {
         <p>PINs on locked drops and account passwords are never stored in plain text. Each is combined with a random per-item salt and passed through an HMAC-SHA256 one-way hash -- we cannot read your PIN or password back out, only verify a match.</p>
 
         <h2 class="text-base font-semibold text-white">Client-side encryption</h2>
-        <p>For PIN-locked notes, when enabled for your plan, your browser derives an encryption key from your PIN and encrypts the note's text before it ever leaves your device. The server stores only the encrypted bytes.</p>
+        <p>For PIN-locked notes, when enabled for your plan, encryption must be explicitly enabled when creating a drop. Standard PIN protection controls access but does not encrypt stored text. Titles and expiry metadata are visible to the service.</p>
 
         <h2 class="text-base font-semibold text-white">IP addresses and analytics</h2>
         <p>We keep basic, privacy-safe usage analytics (device type, access method, feature used) to understand how AirText is used. Your IP address is never stored raw -- it is combined with the date and one-way hashed before anything is written, and that hash cannot be reversed back into an IP address. The same hashing applies to the "network" grouping used to show what's nearby on your Wi-Fi.</p>

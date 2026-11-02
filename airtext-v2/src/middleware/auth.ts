@@ -19,13 +19,15 @@ export interface SessionPayload {
   rank: number;
   exp: number;
   nonce: string;
+  version?: number;
 }
 
-export async function createSessionToken(secret: string, userId: string, roleRank: number): Promise<string> {
+export async function createSessionToken(secret: string, userId: string, roleRank: number, version = 0): Promise<string> {
   const payload = base64UrlEncode(
     JSON.stringify({
       sub: userId,
       rank: roleRank,
+      version,
       exp: Math.floor(Date.now() / 1000) + CONFIG.ADMIN_SESSION_SECONDS,
       nonce: randomBase64Url(12),
     }),
@@ -50,6 +52,11 @@ export async function getSession(request: Request, env: Env): Promise<SessionPay
     const payload = JSON.parse(base64UrlDecode(parts[0])) as SessionPayload;
     if (!(Number(payload.exp) > Math.floor(Date.now() / 1000))) return null;
     if (typeof payload.sub !== "string" || typeof payload.rank !== "number") return null;
+    const current = await env.DB.prepare(
+      `SELECT r.rank, u.session_version FROM users u JOIN roles r ON r.id = u.role_id
+       WHERE u.id = ? AND u.status = 'active'`,
+    ).bind(payload.sub).first<{ rank: number; session_version: number }>();
+    if (!current || current.rank !== payload.rank || current.session_version !== (payload.version ?? 0)) return null;
     return payload;
   } catch {
     return null;
@@ -139,4 +146,12 @@ export async function getClientIpHash(request: Request, secret: string): Promise
   const ip = getClientIp(request);
   const digest = await hmacHex(secret, `client:${ip}`);
   return digest.slice(0, 32);
+}
+
+/** A room/IP match is never ownership. The opaque creator token is a capability. */
+export async function isDropOwner(request: Request, env: Env, userId: string | null, tokenHash: string): Promise<boolean> {
+  const token = request.headers.get("x-airtext-owner");
+  if (token && constantTimeEqual(await hmacHex(env.APP_SECRET, `delete:${token}`), tokenHash)) return true;
+  const user = userId ? await getAuthenticatedUser(request, env) : null;
+  return Boolean(user && user.id === userId);
 }

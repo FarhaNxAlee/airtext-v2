@@ -218,7 +218,7 @@ describe("PATCH /api/file/:groupId", () => {
 });
 
 describe("burn-after-read (files)", () => {
-  it("deletes the whole batch after the first file download, not at open-time", async () => {
+  it("allows each attachment once without deleting the unread attachments", async () => {
     const { body: created } = await uploadFiles(
       [{ name: "a.txt", content: "A" }, { name: "b.txt", content: "B" }],
       { burnAfterRead: "1" },
@@ -232,7 +232,12 @@ describe("burn-after-read (files)", () => {
     const stillOpen = await SELF.fetch(`https://example.com/api/share/file/${created.group.code}`);
     expect(stillOpen.status).toBe(200);
 
-    await SELF.fetch(new URL(opened.group.files[0].downloadUrl, "https://example.com"));
+    const first = await SELF.fetch(new URL(opened.group.files[0].downloadUrl, "https://example.com"));
+    expect(await first.text()).toBe("A");
+    expect((await SELF.fetch(new URL(opened.group.files[0].downloadUrl, "https://example.com"))).status).toBe(404);
+    expect((await SELF.fetch(`https://example.com/api/share/file/${created.group.code}`)).status).toBe(200);
+    const second = await SELF.fetch(new URL(opened.group.files[1].downloadUrl, "https://example.com"));
+    expect(await second.text()).toBe("B");
     const afterDownload = await SELF.fetch(`https://example.com/api/share/file/${created.group.code}`);
     expect(afterDownload.status).toBe(404);
   });

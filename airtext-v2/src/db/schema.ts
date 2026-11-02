@@ -41,6 +41,7 @@ export const users = sqliteTable(
     email: text("email").notNull().unique(),
     passwordSalt: text("password_salt").notNull(),
     passwordHash: text("password_hash").notNull(),
+    sessionVersion: integer("session_version").notNull().default(0),
     displayName: text("display_name").notNull(),
     roleId: integer("role_id")
       .notNull()
@@ -142,6 +143,7 @@ export const files = sqliteTable(
     sizeBytes: integer("size_bytes").notNull(),
     r2Key: text("r2_key").notNull(),
     downloadCount: integer("download_count").notNull().default(0),
+    consumedAt: integer("consumed_at"),
     createdAt: integer("created_at").notNull(),
   },
   (table) => ({
@@ -240,3 +242,9 @@ export const auditLog = sqliteTable(
     actorIdx: index("idx_audit_log_actor").on(table.actorUserId),
   }),
 );
+
+export const objectDeletions = sqliteTable("object_deletions", {
+  r2Key: text("r2_key").primaryKey(),
+  createdAt: integer("created_at").notNull(),
+  attempts: integer("attempts").notNull().default(0),
+});

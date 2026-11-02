@@ -8,7 +8,7 @@ import type { EffectiveLimits } from "../lib/limits";
 import { jsonResponse, jsonError, readJsonBody } from "../lib/http";
 import { hmacHex, hashPin, constantTimeEqual, randomBase64Url, randomShareCode } from "../lib/crypto";
 import { normalizeTitle, normalizeText, normalizeShareCode, formatServerDuration, isExpired } from "../lib/util";
-import { getRoomId, getClientIpHash, getAuthenticatedUser } from "../middleware/auth";
+import { getRoomId, getClientIpHash, getAuthenticatedUser, isDropOwner } from "../middleware/auth";
 import { enforceCooldown } from "../middleware/rateLimit";
 import { recordEvent } from "../lib/analytics";
 
@@ -104,7 +104,7 @@ async function getNoteByCode(env: Env, rawCode: string): Promise<NoteRow | null>
 }
 
 async function addNoteToRoom(env: Env, note: NoteRow, roomId: string, source: "mine" | "received"): Promise<void> {
-  if (!note || isExpired(note)) return;
+  if (!note || isExpired(note) || note.burnAfterRead) return;
   await env.DB.prepare(
     "INSERT OR IGNORE INTO network_notes (room_id, note_id, source, added_at) VALUES (?, ?, ?, ?)",
   )
@@ -117,7 +117,7 @@ async function addNoteToRoom(env: Env, note: NoteRow, roomId: string, source: "m
  *  already has this note, so re-sharing after the visibility window has
  *  elapsed (see networkVisibilityTtlSeconds) actually makes it reappear. */
 async function publishNoteToRoom(env: Env, note: NoteRow, roomId: string, source: "mine" | "received"): Promise<void> {
-  if (!note || isExpired(note)) return;
+  if (!note || isExpired(note) || note.burnAfterRead) return;
   await env.DB.prepare(
     `INSERT INTO network_notes (room_id, note_id, source, added_at) VALUES (?, ?, ?, ?)
      ON CONFLICT(room_id, note_id) DO UPDATE SET added_at = excluded.added_at, source = excluded.source`,
@@ -254,6 +254,7 @@ async function applyNoteEdit(
     .bind(title, text, locked ? 1 : 0, pinSalt, pinHash, burnAfterRead ? 1 : 0, expiresAt, note.id)
     .run();
 
+  if (burnAfterRead) await env.DB.prepare("DELETE FROM network_notes WHERE note_id = ?").bind(note.id).run();
   return { ok: true, note: { ...note, title, text, locked, pinSalt, pinHash, burnAfterRead, expiresAt } };
 }
 
@@ -292,19 +293,20 @@ notesRoutes.get("/api/local/items", async (c) => {
   const settings = await getSiteSettings(c.env);
   const roomId = await getRoomId(c.req.raw, c.env.APP_SECRET);
   const visibilityCutoff = Date.now() - settings.networkVisibilityTtlSeconds * 1000;
+  const viewer = await getAuthenticatedUser(c.req.raw, c.env);
   const result = await c.env.DB.prepare(
-    `SELECT n.id, n.title, n.locked, n.code, n.created_at, n.expires_at, n.burn_after_read,
+    `SELECT n.user_id, n.id, n.title, n.locked, n.code, n.created_at, n.expires_at, n.burn_after_read,
             nn.added_at, nn.source, ${SHARED_BY_COLUMNS}
      FROM network_notes nn
      JOIN notes n ON n.id = nn.note_id
      ${SHARED_BY_JOIN}
-     WHERE nn.room_id = ? AND n.expires_at > ? AND nn.added_at > ?
+     WHERE nn.room_id = ? AND n.expires_at > ? AND n.burn_after_read = 0 AND nn.added_at > ?
      ORDER BY nn.added_at DESC
      LIMIT ?`,
   )
     .bind(roomId, Date.now(), visibilityCutoff, settings.maxLocalItems)
     .all<{
-      id: string; title: string; locked: number; code: string; created_at: number; expires_at: number; burn_after_read: number;
+      user_id: string | null; id: string; title: string; locked: number; code: string; created_at: number; expires_at: number; burn_after_read: number;
       added_at: number; source: string; shared_by_name: string | null; shared_by_role: string | null; shared_by_rank: number | null;
     }>();
 
@@ -319,7 +321,8 @@ notesRoutes.get("/api/local/items", async (c) => {
       addedAt: Number(row.added_at || row.created_at || 0),
       expiresAt: Number(row.expires_at || 0),
       burnAfterRead: Boolean(row.burn_after_read),
-      source: row.source === "received" ? "received" : "mine",
+      isOwner: Boolean(viewer && row.user_id === viewer.id),
+      source: "nearby",
       ...(row.shared_by_name
         ? { sharedBy: { name: row.shared_by_name, role: row.shared_by_role || "", rank: Number(row.shared_by_rank) } }
         : {}),
@@ -342,12 +345,12 @@ notesRoutes.get("/api/local/count", async (c) => {
   const now = Date.now();
   const visibilityCutoff = now - settings.networkVisibilityTtlSeconds * 1000;
   const noteCountRow = await env.DB.prepare(
-    `SELECT COUNT(*) AS count FROM network_notes nn JOIN notes n ON n.id = nn.note_id WHERE nn.room_id = ? AND n.expires_at > ? AND nn.added_at > ?`,
+    `SELECT COUNT(*) AS count FROM network_notes nn JOIN notes n ON n.id = nn.note_id WHERE nn.room_id = ? AND n.expires_at > ? AND n.burn_after_read = 0 AND nn.added_at > ?`,
   )
     .bind(roomId, now, visibilityCutoff)
     .first<{ count: number }>();
   const fileCountRow = await env.DB.prepare(
-    `SELECT COUNT(*) AS count FROM network_files nf JOIN file_groups g ON g.id = nf.group_id WHERE nf.room_id = ? AND g.expires_at > ? AND nf.added_at > ?`,
+    `SELECT COUNT(*) AS count FROM network_files nf JOIN file_groups g ON g.id = nf.group_id WHERE nf.room_id = ? AND g.expires_at > ? AND g.burn_after_read = 0 AND nf.added_at > ?`,
   )
     .bind(roomId, now, visibilityCutoff)
     .first<{ count: number }>();
@@ -450,11 +453,11 @@ notesRoutes.post("/api/items", async (c) => {
       id, roomId, title, text, wantsLock ? 1 : 0, pinSalt, pinHash, code, deleteTokenHash, createdAt, expiresAt,
       user?.id ?? null, wantsBurnAfterRead ? 1 : 0,
     ),
-    env.DB.prepare("INSERT INTO network_notes (room_id, note_id, source, added_at) VALUES (?, ?, 'mine', ?)").bind(
+    ...(!wantsBurnAfterRead ? [env.DB.prepare("INSERT INTO network_notes (room_id, note_id, source, added_at) VALUES (?, ?, 'mine', ?)").bind(
       roomId,
       id,
       createdAt,
-    ),
+    )] : []),
   ]);
 
   await recordEvent(env, c.req.raw, "note_created", { locked: wantsLock });
@@ -462,7 +465,7 @@ notesRoutes.post("/api/items", async (c) => {
     {
       ok: true,
       item: {
-        id, title, locked: wantsLock, code, createdAt, addedAt: createdAt, expiresAt, source: "mine",
+        id, title, locked: wantsLock, burnAfterRead: wantsBurnAfterRead, code, createdAt, addedAt: createdAt, expiresAt, source: "mine",
         ...(user ? { sharedBy: { name: user.displayName, role: user.roleName, rank: user.rank } } : {}),
       },
       deleteToken,
@@ -482,7 +485,7 @@ notesRoutes.get("/api/local/item/:itemId", async (c) => {
     `SELECT n.*, ${SHARED_BY_COLUMNS} FROM notes n
      JOIN network_notes nn ON nn.note_id = n.id
      ${SHARED_BY_JOIN}
-     WHERE n.id = ? AND nn.room_id = ? AND n.expires_at > ? AND nn.added_at > ?`,
+     WHERE n.id = ? AND nn.room_id = ? AND n.expires_at > ? AND n.burn_after_read = 0 AND nn.added_at > ?`,
   )
     .bind(itemId, roomId, Date.now(), Date.now() - settings.networkVisibilityTtlSeconds * 1000)
     .first<RawNoteRow>();
@@ -501,7 +504,7 @@ notesRoutes.post("/api/local/item/:itemId/unlock", async (c) => {
     `SELECT n.*, ${SHARED_BY_COLUMNS} FROM notes n
      JOIN network_notes nn ON nn.note_id = n.id
      ${SHARED_BY_JOIN}
-     WHERE n.id = ? AND nn.room_id = ? AND n.expires_at > ? AND nn.added_at > ?`,
+     WHERE n.id = ? AND nn.room_id = ? AND n.expires_at > ? AND n.burn_after_read = 0 AND nn.added_at > ?`,
   )
     .bind(itemId, roomId, Date.now(), Date.now() - settings.networkVisibilityTtlSeconds * 1000)
     .first<RawNoteRow>();
@@ -526,8 +529,10 @@ notesRoutes.get("/api/share/:code", async (c) => {
   }
   await recordEvent(env, c.req.raw, "shared_note_opened", { via, locked: note.locked });
   const payload = publicItemPayload(note, !note.locked);
-  if (!note.locked && note.burnAfterRead) {
-    await env.DB.prepare("DELETE FROM notes WHERE id = ?").bind(note.id).run();
+  const owner = await isDropOwner(c.req.raw, env, note.userId, note.deleteTokenHash);
+  if (!note.locked && note.burnAfterRead && !owner) {
+    const consumed = await env.DB.prepare("DELETE FROM notes WHERE id = ? AND burn_after_read = 1 RETURNING id").bind(note.id).first();
+    if (!consumed) return jsonError("This drop has already been opened.", 404, "CODE_NOT_FOUND");
   }
   return jsonResponse(payload);
 });
@@ -546,8 +551,10 @@ notesRoutes.post("/api/share/:code/unlock", async (c) => {
   }
   await recordEvent(env, c.req.raw, "pin_unlocked", { via: normalizeAccessMethodParam(url) });
   const payload = publicItemPayload(note, true);
-  if (note.burnAfterRead) {
-    await env.DB.prepare("DELETE FROM notes WHERE id = ?").bind(note.id).run();
+  const owner = await isDropOwner(c.req.raw, env, note.userId, note.deleteTokenHash);
+  if (note.burnAfterRead && !owner) {
+    const consumed = await env.DB.prepare("DELETE FROM notes WHERE id = ? AND burn_after_read = 1 RETURNING id").bind(note.id).first();
+    if (!consumed) return jsonError("This drop has already been opened.", 404, "CODE_NOT_FOUND");
   }
   return jsonResponse(payload);
 });
@@ -568,6 +575,12 @@ notesRoutes.delete("/api/item/:itemId", async (c) => {
   await env.DB.prepare("DELETE FROM notes WHERE id = ?").bind(note.id).run();
   await recordEvent(env, c.req.raw, "note_deleted", { by: "creator" });
   return jsonResponse({ ok: true, message: "Note deleted." });
+});
+
+notesRoutes.get("/api/item/:itemId", async (c) => {
+  const note = await getNoteById(c.env, c.req.param("itemId"));
+  if (!note || !await isDropOwner(c.req.raw, c.env, note.userId, note.deleteTokenHash)) return jsonError("Drop not found.", 404, "NOT_FOUND");
+  return jsonResponse({ ...publicItemPayload(note, true), isOwner: true });
 });
 
 notesRoutes.patch("/api/item/:itemId", async (c) => {

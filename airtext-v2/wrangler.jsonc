@@ -8,6 +8,7 @@
   "compatibility_date": "2026-07-24",
   "account_id": "1bda1bde506a5819776160299196e802",
   "preview_urls": false,
+  "triggers": { "crons": ["*/5 * * * *"] },
   "observability": {
     "enabled": true,
     "logs": {
@@ -38,7 +39,6 @@
       "id": "f0905b728d8642df9df5e7e167c52ab0"
     }
   ]
-  // APP_SECRET and ADMIN_PASSWORD are real secrets — set via
-  // `wrangler secret put APP_SECRET` / `wrangler secret put ADMIN_PASSWORD`.
+  // APP_SECRET is a real secret — set via `wrangler secret put APP_SECRET`.
   // Never add them here as `vars`.
 }

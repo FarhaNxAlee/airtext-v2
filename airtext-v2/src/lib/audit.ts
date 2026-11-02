@@ -39,8 +39,8 @@ export async function recordAudit(env: Env, params: RecordAuditParams): Promise<
         params.action,
         params.targetType ?? null,
         params.targetId ?? null,
-        params.before !== undefined ? JSON.stringify(params.before) : null,
-        params.after !== undefined ? JSON.stringify(params.after) : null,
+        params.before !== undefined ? JSON.stringify(redactAudit(params.before)) : null,
+        params.after !== undefined ? JSON.stringify(redactAudit(params.after)) : null,
         params.ipHash ?? null,
         createdAt,
       )
@@ -48,4 +48,11 @@ export async function recordAudit(env: Env, params: RecordAuditParams): Promise<
   } catch (error) {
     console.warn("D1 audit log write skipped", error);
   }
+}
+
+/** Content and credentials do not belong in operational history. */
+function redactAudit(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(redactAudit);
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(Object.entries(value).filter(([key]) => !/^(text|body|pin|password|passwordHash|passwordSalt|pinHash|pinSalt|deleteToken|token|ciphertext|encryptionKey)$/i.test(key)).map(([key, item]) => [key, redactAudit(item)]));
 }

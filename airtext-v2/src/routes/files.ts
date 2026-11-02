@@ -5,13 +5,13 @@ import { getSiteSettings } from "../lib/settings";
 import type { SiteSettings } from "../lib/settings";
 import { getEffectiveLimits } from "../lib/limits";
 import type { EffectiveLimits } from "../lib/limits";
-import { jsonResponse, jsonError, readJsonBody } from "../lib/http";
+import { jsonResponse, jsonError, readJsonBody, readMultipartBody } from "../lib/http";
 import { hmacHex, hashPin, constantTimeEqual, randomBase64Url, randomShareCode } from "../lib/crypto";
 import { normalizeTitle, normalizeShareCode, formatServerDuration, isExpired } from "../lib/util";
-import { getRoomId, getClientIpHash, getAuthenticatedUser } from "../middleware/auth";
+import { getRoomId, getClientIpHash, getAuthenticatedUser, isDropOwner } from "../middleware/auth";
 import { enforceCooldown } from "../middleware/rateLimit";
 import { recordEvent } from "../lib/analytics";
-import { isExtensionAllowed, getTotalFileStorageBytes, createFileDownloadToken, verifyFileDownloadToken } from "../lib/r2";
+import { deleteObjectsReliably, isExtensionAllowed, getTotalFileStorageBytes, createFileDownloadToken, verifyFileDownloadToken } from "../lib/r2";
 
 /**
  * Phase 5: one share code/link now covers a BATCH of one or more files
@@ -33,6 +33,7 @@ export interface FileEntry {
   sizeBytes: number;
   r2Key: string;
   downloadCount: number;
+  consumedAt?: number | null;
 }
 
 export interface FileGroupRow {
@@ -78,6 +79,7 @@ interface RawFileEntryRow {
   size_bytes?: number;
   r2_key?: string;
   download_count?: number;
+  consumed_at?: number | null;
 }
 
 const SHARED_BY_JOIN = `LEFT JOIN users u ON u.id = g.user_id LEFT JOIN roles r ON r.id = u.role_id`;
@@ -113,6 +115,7 @@ function rowToFileEntry(row: RawFileEntryRow): FileEntry {
     sizeBytes: Number(row.size_bytes || 0),
     r2Key: String(row.r2_key || ""),
     downloadCount: Number(row.download_count || 0),
+    consumedAt: row.consumed_at ?? null,
   };
 }
 
@@ -128,7 +131,7 @@ async function getGroupById(env: Env, groupId: string): Promise<FileGroupRow | n
 async function getGroupByCode(env: Env, rawCode: string): Promise<FileGroupRow | null> {
   const code = normalizeShareCode(rawCode);
   const row = await env.DB.prepare(
-    `SELECT g.*, ${SHARED_BY_COLUMNS} FROM file_groups g ${SHARED_BY_JOIN} WHERE g.code = ? AND g.expires_at > ?`,
+    `SELECT g.*, ${SHARED_BY_COLUMNS} FROM file_groups g ${SHARED_BY_JOIN} WHERE g.code = ? AND g.expires_at > ? AND EXISTS (SELECT 1 FROM files f WHERE f.group_id=g.id AND f.consumed_at IS NULL)`,
   )
     .bind(code, Date.now())
     .first<RawGroupRow>();
@@ -137,7 +140,7 @@ async function getGroupByCode(env: Env, rawCode: string): Promise<FileGroupRow |
 
 async function getFilesForGroup(env: Env, groupId: string): Promise<FileEntry[]> {
   const result = await env.DB.prepare(
-    "SELECT id, filename, mime, size_bytes, r2_key, download_count FROM files WHERE group_id = ? ORDER BY created_at ASC",
+    "SELECT id, filename, mime, size_bytes, r2_key, download_count, consumed_at FROM files WHERE group_id = ? ORDER BY created_at ASC",
   )
     .bind(groupId)
     .all<RawFileEntryRow>();
@@ -145,7 +148,7 @@ async function getFilesForGroup(env: Env, groupId: string): Promise<FileEntry[]>
 }
 
 async function getFileEntryById(env: Env, fileId: string): Promise<(FileEntry & { groupId: string }) | null> {
-  const row = await env.DB.prepare("SELECT id, group_id, filename, mime, size_bytes, r2_key, download_count FROM files WHERE id = ?")
+  const row = await env.DB.prepare("SELECT id, group_id, filename, mime, size_bytes, r2_key, download_count, consumed_at FROM files WHERE id = ?")
     .bind(fileId)
     .first<RawFileEntryRow & { group_id: string }>();
   if (!row) return null;
@@ -153,7 +156,7 @@ async function getFileEntryById(env: Env, fileId: string): Promise<(FileEntry & 
 }
 
 async function addGroupToRoom(env: Env, group: FileGroupRow, roomId: string, source: "mine" | "received"): Promise<void> {
-  if (!group || isExpired(group)) return;
+  if (!group || isExpired(group) || group.burnAfterRead) return;
   await env.DB.prepare(
     "INSERT OR IGNORE INTO network_files (room_id, group_id, source, added_at) VALUES (?, ?, ?, ?)",
   )
@@ -166,7 +169,7 @@ async function addGroupToRoom(env: Env, group: FileGroupRow, roomId: string, sou
  *  already has this group, so re-sharing after the visibility window has
  *  elapsed (see networkVisibilityTtlSeconds) actually makes it reappear. */
 async function publishGroupToRoom(env: Env, group: FileGroupRow, roomId: string, source: "mine" | "received"): Promise<void> {
-  if (!group || isExpired(group)) return;
+  if (!group || isExpired(group) || group.burnAfterRead) return;
   await env.DB.prepare(
     `INSERT INTO network_files (room_id, group_id, source, added_at) VALUES (?, ?, ?, ?)
      ON CONFLICT(room_id, group_id) DO UPDATE SET added_at = excluded.added_at, source = excluded.source`,
@@ -227,14 +230,14 @@ async function verifyGroupPin(
   return { ok: true };
 }
 
-async function publicGroupPayload(env: Env, group: FileGroupRow, files: FileEntry[], includeDownload: boolean) {
+async function publicGroupPayload(env: Env, group: FileGroupRow, files: FileEntry[], includeDownload: boolean, owner = false) {
   const filePayloads = await Promise.all(
-    files.map(async (file) => {
+    files.filter((file) => !file.consumedAt).map(async (file) => {
       let downloadUrl: string | null = null;
       if (includeDownload) {
         const tokenExpiresAt = Date.now() + 5 * 60 * 1000;
-        const token = await createFileDownloadToken(env.APP_SECRET, file.id, tokenExpiresAt);
-        downloadUrl = `/api/file/${file.id}/download?token=${encodeURIComponent(token)}`;
+        const token = await createFileDownloadToken(env.APP_SECRET, file.id, tokenExpiresAt, owner);
+        downloadUrl = `/api/file/${file.id}/download?token=${encodeURIComponent(token)}${owner ? "&owner=1" : ""}`;
       }
       return {
         id: file.id,
@@ -260,6 +263,7 @@ async function publicGroupPayload(env: Env, group: FileGroupRow, files: FileEntr
       burnAfterRead: Boolean(group.burnAfterRead),
       ...(group.sharedBy ? { sharedBy: group.sharedBy } : {}),
       files: filePayloads,
+      isOwner: owner,
     },
   };
 }
@@ -430,6 +434,7 @@ async function applyFileGroupEdit(
     await Promise.all(filesToRemove.map((file) => env.FILES_BUCKET.delete(file.r2Key).catch(() => {})));
   }
 
+  if (burnAfterRead) await env.DB.prepare("DELETE FROM network_files WHERE group_id = ?").bind(group.id).run();
   const updatedGroup: FileGroupRow = { ...group, title, locked, pinSalt, pinHash, burnAfterRead, expiresAt, totalSizeBytes: resultingGroupBytes };
   const updatedFiles: FileEntry[] = [
     ...remainingFiles,
@@ -452,20 +457,21 @@ filesRoutes.get("/api/local/files", async (c) => {
   const settings = await getSiteSettings(env);
   const roomId = await getRoomId(c.req.raw, env.APP_SECRET);
   const visibilityCutoff = Date.now() - settings.networkVisibilityTtlSeconds * 1000;
+  const viewer = await getAuthenticatedUser(c.req.raw, env);
   const result = await env.DB.prepare(
-    `SELECT g.id, g.title, g.locked, g.code, g.total_size_bytes, g.created_at, g.expires_at, g.burn_after_read,
+    `SELECT g.user_id, g.id, g.title, g.locked, g.code, g.total_size_bytes, g.created_at, g.expires_at, g.burn_after_read,
             nf.added_at, nf.source, ${SHARED_BY_COLUMNS},
             (SELECT COUNT(*) FROM files WHERE files.group_id = g.id) AS file_count
      FROM network_files nf
      JOIN file_groups g ON g.id = nf.group_id
      ${SHARED_BY_JOIN}
-     WHERE nf.room_id = ? AND g.expires_at > ? AND nf.added_at > ?
+     WHERE nf.room_id = ? AND g.expires_at > ? AND g.burn_after_read = 0 AND nf.added_at > ?
      ORDER BY nf.added_at DESC
      LIMIT ?`,
   )
     .bind(roomId, Date.now(), visibilityCutoff, settings.maxActiveFiles)
     .all<{
-      id: string; title: string; locked: number; code: string; total_size_bytes: number; created_at: number;
+      user_id: string | null; id: string; title: string; locked: number; code: string; total_size_bytes: number; created_at: number;
       expires_at: number; burn_after_read: number; added_at: number; source: string; file_count: number;
       shared_by_name: string | null; shared_by_role: string | null; shared_by_rank: number | null;
     }>();
@@ -483,7 +489,8 @@ filesRoutes.get("/api/local/files", async (c) => {
       addedAt: Number(row.added_at || row.created_at || 0),
       expiresAt: Number(row.expires_at || 0),
       burnAfterRead: Boolean(row.burn_after_read),
-      source: row.source === "received" ? "received" : "mine",
+      isOwner: Boolean(viewer && row.user_id === viewer.id),
+      source: "nearby",
       ...(row.shared_by_name
         ? { sharedBy: { name: row.shared_by_name, role: row.shared_by_role || "", rank: Number(row.shared_by_rank) } }
         : {}),
@@ -516,12 +523,9 @@ filesRoutes.post("/api/files", async (c) => {
     return jsonError(`Uploads must be ${limits.maxBatchTotalMB}MB or smaller in total.`, 413, "BATCH_TOO_LARGE");
   }
 
-  let form: FormData;
-  try {
-    form = await c.req.raw.formData();
-  } catch {
-    return jsonError("Could not read the upload. Please try again.", 400, "INVALID_UPLOAD");
-  }
+  const multipart = await readMultipartBody(c.req.raw);
+  if (!multipart.ok) return multipart.response;
+  const form = multipart.data;
 
   const uploadedFiles = form.getAll("file").filter((entry): entry is File => typeof (entry as File).arrayBuffer === "function");
   if (!uploadedFiles.length) return jsonError("Please choose at least one file to share.", 400, "FILE_REQUIRED");
@@ -651,11 +655,11 @@ filesRoutes.post("/api/files", async (c) => {
            VALUES (?, ?, ?, ?, ?, ?, 0, ?)`,
         ).bind(entry.id, groupId, entry.filename, entry.mime, entry.size, entry.r2Key, createdAt),
       ),
-      env.DB.prepare("INSERT INTO network_files (room_id, group_id, source, added_at) VALUES (?, ?, 'mine', ?)").bind(
+      ...(!wantsBurnAfterRead ? [env.DB.prepare("INSERT INTO network_files (room_id, group_id, source, added_at) VALUES (?, ?, 'mine', ?)").bind(
         roomId,
         groupId,
         createdAt,
-      ),
+      )] : []),
     ]);
   } catch (error) {
     await Promise.all(uploaded.map((entry) => env.FILES_BUCKET.delete(entry.r2Key).catch(() => {})));
@@ -668,7 +672,7 @@ filesRoutes.post("/api/files", async (c) => {
     {
       ok: true,
       group: {
-        id: groupId, title, locked: wantsLock, code, createdAt, addedAt: createdAt, expiresAt, source: "mine",
+        id: groupId, title, locked: wantsLock, burnAfterRead: wantsBurnAfterRead, code, createdAt, addedAt: createdAt, expiresAt, source: "mine",
         totalSizeBytes: batchBytes,
         fileCount: uploaded.length,
         files: uploaded.map((entry) => ({ id: entry.id, filename: entry.filename, mime: entry.mime, sizeBytes: entry.size })),
@@ -691,7 +695,7 @@ filesRoutes.get("/api/local/file/:groupId", async (c) => {
     `SELECT g.*, ${SHARED_BY_COLUMNS} FROM file_groups g
      JOIN network_files nf ON nf.group_id = g.id
      ${SHARED_BY_JOIN}
-     WHERE g.id = ? AND nf.room_id = ? AND g.expires_at > ? AND nf.added_at > ?`,
+     WHERE g.id = ? AND nf.room_id = ? AND g.expires_at > ? AND g.burn_after_read = 0 AND nf.added_at > ?`,
   )
     .bind(groupId, roomId, Date.now(), Date.now() - settings.networkVisibilityTtlSeconds * 1000)
     .first<RawGroupRow>();
@@ -711,7 +715,7 @@ filesRoutes.post("/api/local/file/:groupId/unlock", async (c) => {
     `SELECT g.*, ${SHARED_BY_COLUMNS} FROM file_groups g
      JOIN network_files nf ON nf.group_id = g.id
      ${SHARED_BY_JOIN}
-     WHERE g.id = ? AND nf.room_id = ? AND g.expires_at > ? AND nf.added_at > ?`,
+     WHERE g.id = ? AND nf.room_id = ? AND g.expires_at > ? AND g.burn_after_read = 0 AND nf.added_at > ?`,
   )
     .bind(groupId, roomId, Date.now(), Date.now() - settings.networkVisibilityTtlSeconds * 1000)
     .first<RawGroupRow>();
@@ -770,7 +774,8 @@ filesRoutes.get("/api/file/:fileId/download", async (c) => {
   if (!group) return jsonError("This file has expired or does not exist.", 404, "NOT_FOUND");
 
   const token = url.searchParams.get("token") || "";
-  const valid = await verifyFileDownloadToken(env.APP_SECRET, entry.id, token);
+  const ownerDownload = url.searchParams.get("owner") === "1";
+  const valid = await verifyFileDownloadToken(env.APP_SECRET, entry.id, token, ownerDownload);
   if (!valid) {
     return jsonError("This download link is invalid or has expired. Reopen the file to try again.", 403, "INVALID_DOWNLOAD_TOKEN");
   }
@@ -783,25 +788,34 @@ filesRoutes.get("/api/file/:fileId/download", async (c) => {
 
   const safeName = entry.filename.replace(/["\r\n]/g, "");
 
-  // Burn-after-read for files means "after the first download from this
-  // batch" (not at open-time, since the open response is what hands out
-  // the download links/tokens the user hasn't clicked yet). Buffer this
-  // file's bytes before deleting so the response body is unaffected by
-  // its own R2 object being removed, then delete synchronously -- awaited,
-  // not fire-and-forget, so the batch is guaranteed gone by the time this
-  // request completes (no ambiguity about whether cleanup "eventually" ran).
-  if (group.burnAfterRead) {
-    const bytes = await object.arrayBuffer();
-    await deleteGroupAndFiles(env, group.id);
-    return new Response(bytes, {
-      status: 200,
-      headers: {
-        "content-type": entry.mime || "application/octet-stream",
-        "content-disposition": `attachment; filename="${safeName}"`,
-        "cache-control": "no-store",
-        "content-length": String(entry.sizeBytes),
+  // Claim each file once atomically. Owners use a separately signed capability.
+  // Streaming keeps large downloads out of the Worker's JavaScript heap.
+  if (entry.consumedAt) return jsonError("This file has already been downloaded.", 404, "NOT_FOUND");
+  if (group.burnAfterRead && !ownerDownload) {
+    const claimed = await env.DB.prepare("UPDATE files SET consumed_at = ? WHERE id = ? AND consumed_at IS NULL RETURNING id").bind(Date.now(), entry.id).first();
+    if (!claimed) return jsonError("This file has already been downloaded.", 404, "NOT_FOUND");
+    const reader = object.body.getReader();
+    let finished = false;
+    const finish = () => {
+      if (finished) return;
+      finished = true;
+      c.executionCtx.waitUntil(deleteObjectsReliably(env, [entry.r2Key]));
+    };
+    const stream = new ReadableStream<Uint8Array>({
+      async pull(controller) {
+        try {
+          const next = await reader.read();
+          if (next.done) { controller.close(); finish(); }
+          else controller.enqueue(next.value);
+        } catch (error) { controller.error(error); finish(); }
       },
+      async cancel(reason) { await reader.cancel(reason); finish(); },
     });
+    return new Response(stream, { headers: {
+      "content-type": entry.mime || "application/octet-stream",
+      "content-disposition": `attachment; filename="${safeName}"`,
+      "cache-control": "no-store", "x-content-type-options": "nosniff",
+    } });
   }
 
   return new Response(object.body, {
@@ -833,17 +847,20 @@ filesRoutes.delete("/api/file/:groupId", async (c) => {
   return jsonResponse({ ok: true, message: "File deleted." });
 });
 
+filesRoutes.get("/api/file/:groupId", async (c) => {
+  const group = await getGroupById(c.env, c.req.param("groupId"));
+  if (!group || !await isDropOwner(c.req.raw, c.env, group.userId, group.deleteTokenHash)) return jsonError("Drop not found.", 404, "NOT_FOUND");
+  return jsonResponse(await publicGroupPayload(c.env, group, await getFilesForGroup(c.env, group.id), true, true));
+});
+
 filesRoutes.patch("/api/file/:groupId", async (c) => {
   const env = c.env;
   const groupId = c.req.param("groupId");
   const group = await getGroupById(env, groupId);
   if (!group) return jsonError("This file has already expired or does not exist.", 404, "NOT_FOUND");
-  let form: FormData;
-  try {
-    form = await c.req.raw.formData();
-  } catch {
-    return jsonError("Could not read the request. Please try again.", 400, "INVALID_UPLOAD");
-  }
+  const multipart = await readMultipartBody(c.req.raw);
+  if (!multipart.ok) return multipart.response;
+  const form = multipart.data;
   const token = typeof form.get("deleteToken") === "string" ? (form.get("deleteToken") as string) : "";
   if (!token) return jsonError("Delete token is required.", 401, "DELETE_TOKEN_REQUIRED");
   const suppliedHash = await hmacHex(env.APP_SECRET, `delete:${token}`);
@@ -862,13 +879,13 @@ filesRoutes.patch("/api/file/:groupId", async (c) => {
 
 async function deleteGroupAndFiles(env: Env, groupId: string): Promise<void> {
   const files = await getFilesForGroup(env, groupId);
-  if (env.FILES_BUCKET && files.length) {
-    await Promise.all(files.map((file) => env.FILES_BUCKET.delete(file.r2Key).catch(() => {})));
-  }
+  // Persist a retry path in the same transaction that removes metadata.
   await env.DB.batch([
+    ...files.map((file) => env.DB.prepare("INSERT OR IGNORE INTO object_deletions (r2_key, created_at) VALUES (?, ?)").bind(file.r2Key, Date.now())),
     env.DB.prepare("DELETE FROM files WHERE group_id = ?").bind(groupId),
     env.DB.prepare("DELETE FROM file_groups WHERE id = ?").bind(groupId),
   ]);
+  await deleteObjectsReliably(env, files.map((file) => file.r2Key));
 }
 
 // Exported for admin.ts (admin delete-by-id reuses the same lookup/delete path).

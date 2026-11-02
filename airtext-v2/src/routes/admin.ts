@@ -3,7 +3,7 @@ import type { Env } from "../types";
 import { CONFIG } from "../lib/config";
 import { getSiteSettings, sanitizeSettings, setSiteSettingsCache } from "../lib/settings";
 import { getEffectiveLimits } from "../lib/limits";
-import { jsonResponse, jsonError, readJsonBody } from "../lib/http";
+import { jsonResponse, jsonError, readJsonBody, readMultipartBody } from "../lib/http";
 import { hashPassword, constantTimeEqual } from "../lib/crypto";
 import { getClientIpHash, requireAdmin, getSession, getAuthenticatedUser, createSessionToken, buildSessionCookie } from "../middleware/auth";
 import { enforceCooldown } from "../middleware/rateLimit";
@@ -23,6 +23,7 @@ interface AdminUserRow {
   id: string;
   password_salt: string;
   password_hash: string;
+  session_version: number;
   status: string;
   rank: number;
 }
@@ -53,7 +54,7 @@ adminRoutes.post("/api/admin/login", async (c) => {
   }
 
   const row = await env.DB.prepare(
-    `SELECT u.id, u.password_salt, u.password_hash, u.status, r.rank
+    `SELECT u.id, u.password_salt, u.password_hash, u.session_version, u.status, r.rank
      FROM users u JOIN roles r ON r.id = u.role_id
      WHERE u.email = ? AND r.rank = 0`,
   )
@@ -71,7 +72,7 @@ adminRoutes.post("/api/admin/login", async (c) => {
     return jsonError("Incorrect email or password.", 401, "INVALID_CREDENTIALS");
   }
 
-  const token = await createSessionToken(env.APP_SECRET, row.id, row.rank);
+  const token = await createSessionToken(env.APP_SECRET, row.id, row.rank, row.session_version);
   await env.DB.prepare("UPDATE users SET last_login_at = ? WHERE id = ?").bind(Date.now(), row.id).run();
   await recordEvent(env, c.req.raw, "admin_login");
   return jsonResponse(
@@ -302,12 +303,9 @@ adminRoutes.patch("/api/admin/file/:fileId", async (c) => {
   if (authError) return authError;
   const group = await getGroupById(env, c.req.param("fileId"));
   if (!group) return jsonError("The file has expired or does not exist.", 404, "NOT_FOUND");
-  let form: FormData;
-  try {
-    form = await c.req.raw.formData();
-  } catch {
-    return jsonError("Could not read the request. Please try again.", 400, "INVALID_UPLOAD");
-  }
+  const multipart = await readMultipartBody(c.req.raw);
+  if (!multipart.ok) return multipart.response;
+  const form = multipart.data;
   const settings = await getSiteSettings(env);
   const requester = await getAuthenticatedUser(c.req.raw, env);
   const limits = await getEffectiveLimits(env, requester);
@@ -567,12 +565,12 @@ function buildDropPart(kind: "note" | "file", now: number, opts: DropsQueryParam
   const sql =
     kind === "note"
       ? `SELECT 'note' AS type, n.id AS id, n.title AS title, n.locked AS locked, n.code AS code,
-                n.created_at AS created_at, n.expires_at AS expires_at,
+                n.created_at AS created_at, n.expires_at AS expires_at, n.burn_after_read AS burn_after_read,
                 substr(n.room_id, 1, 12) AS room_hash, n.user_id AS user_id,
                 NULL AS total_size_bytes, NULL AS file_count, NULL AS download_count
          FROM notes n WHERE n.expires_at > ?${extraWhere}`
       : `SELECT 'file' AS type, g.id AS id, g.title AS title, g.locked AS locked, g.code AS code,
-                g.created_at AS created_at, g.expires_at AS expires_at,
+                g.created_at AS created_at, g.expires_at AS expires_at, g.burn_after_read AS burn_after_read,
                 substr(g.room_id, 1, 12) AS room_hash, g.user_id AS user_id,
                 g.total_size_bytes AS total_size_bytes,
                 (SELECT COUNT(*) FROM files WHERE files.group_id = g.id) AS file_count,
@@ -598,6 +596,7 @@ function buildCombinedDropsSql(now: number, opts: DropsQueryParams): { combinedS
 }
 
 interface DropRow {
+  burn_after_read: number;
   type: "note" | "file";
   id: string;
   title: string;
@@ -646,6 +645,7 @@ adminRoutes.get("/api/admin/drops", async (c) => {
     id: String(row.id),
     title: String(row.title || "Untitled"),
     locked: Boolean(row.locked),
+    burnAfterRead: Boolean(row.burn_after_read),
     code: String(row.code || ""),
     createdAt: Number(row.created_at || 0),
     expiresAt: Number(row.expires_at || 0),
