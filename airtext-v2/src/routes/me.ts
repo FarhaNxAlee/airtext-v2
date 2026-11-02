@@ -3,10 +3,17 @@ import type { Env } from "../types";
 import { CONFIG } from "../lib/config";
 import { jsonResponse, jsonError, readJsonBody } from "../lib/http";
 import { hashPassword, constantTimeEqual, randomBase64Url } from "../lib/crypto";
-import { getClientIpHash, getAuthenticatedUser, createSessionToken, buildSessionCookie } from "../middleware/auth";
+import { getClientIpHash, getAuthenticatedUser, getRoomId, createSessionToken, buildSessionCookie } from "../middleware/auth";
 import { enforceCooldown } from "../middleware/rateLimit";
 import { recordEvent } from "../lib/analytics";
-import { deleteGroupAndFiles } from "./files";
+import { getSiteSettings } from "../lib/settings";
+import { getEffectiveLimits } from "../lib/limits";
+import { formatServerDuration } from "../lib/util";
+import type { NoteEditPatch } from "./notes";
+import {
+  deleteGroupAndFiles, getGroupById, publishGroupToRoom, applyFileGroupEdit, getFilesForGroup, publicGroupPayload,
+} from "./files";
+import { getNoteById, publishNoteToRoom, applyNoteEdit, publicItemPayload } from "./notes";
 
 /**
  * Phase 6: general login for ANY account (admin/Contributor/Pro), separate
@@ -89,19 +96,19 @@ meRoutes.get("/api/me/shares", async (c) => {
   const now = Date.now();
   const [notesResult, groupsResult] = await Promise.all([
     env.DB.prepare(
-      "SELECT id, title, locked, code, created_at, expires_at FROM notes WHERE user_id = ? AND expires_at > ? ORDER BY created_at DESC",
+      "SELECT id, title, locked, code, created_at, expires_at, burn_after_read FROM notes WHERE user_id = ? AND expires_at > ? ORDER BY created_at DESC",
     )
       .bind(user.id, now)
-      .all<{ id: string; title: string; locked: number; code: string; created_at: number; expires_at: number }>(),
+      .all<{ id: string; title: string; locked: number; code: string; created_at: number; expires_at: number; burn_after_read: number }>(),
     env.DB.prepare(
-      `SELECT g.id, g.title, g.locked, g.code, g.total_size_bytes, g.created_at, g.expires_at,
+      `SELECT g.id, g.title, g.locked, g.code, g.total_size_bytes, g.created_at, g.expires_at, g.burn_after_read,
               (SELECT COUNT(*) FROM files WHERE files.group_id = g.id) AS file_count
        FROM file_groups g WHERE g.user_id = ? AND g.expires_at > ? ORDER BY g.created_at DESC`,
     )
       .bind(user.id, now)
       .all<{
         id: string; title: string; locked: number; code: string; total_size_bytes: number;
-        created_at: number; expires_at: number; file_count: number;
+        created_at: number; expires_at: number; burn_after_read: number; file_count: number;
       }>(),
   ]);
 
@@ -114,6 +121,7 @@ meRoutes.get("/api/me/shares", async (c) => {
       code: row.code,
       createdAt: row.created_at,
       expiresAt: row.expires_at,
+      burnAfterRead: Boolean(row.burn_after_read),
     })),
     files: (groupsResult.results || []).map((row) => ({
       id: row.id,
@@ -124,6 +132,7 @@ meRoutes.get("/api/me/shares", async (c) => {
       fileCount: row.file_count,
       createdAt: row.created_at,
       expiresAt: row.expires_at,
+      burnAfterRead: Boolean(row.burn_after_read),
     })),
   });
 });
@@ -163,6 +172,31 @@ meRoutes.patch("/api/me/password", async (c) => {
   return jsonResponse({ ok: true, message: "Password updated." });
 });
 
+meRoutes.get("/api/me/shares/notes/:noteId", async (c) => {
+  const env = c.env;
+  const user = await getAuthenticatedUser(c.req.raw, env);
+  if (!user) return jsonError("Sign in to manage your shares.", 401, "AUTH_REQUIRED");
+  const note = await getNoteById(env, c.req.param("noteId"));
+  if (!note || note.userId !== user.id) return jsonError("Note not found.", 404, "NOT_FOUND");
+  return jsonResponse(publicItemPayload(note, true));
+});
+
+meRoutes.patch("/api/me/shares/notes/:noteId", async (c) => {
+  const env = c.env;
+  const user = await getAuthenticatedUser(c.req.raw, env);
+  if (!user) return jsonError("Sign in to manage your shares.", 401, "AUTH_REQUIRED");
+  const note = await getNoteById(env, c.req.param("noteId"));
+  if (!note || note.userId !== user.id) return jsonError("Note not found.", 404, "NOT_FOUND");
+  const settings = await getSiteSettings(env);
+  const limits = await getEffectiveLimits(env, user);
+  const body = await readJsonBody<NoteEditPatch>(c.req.raw, Math.max(24_000, limits.maxTextLength + 2_000));
+  if (!body.ok) return body.response;
+  const result = await applyNoteEdit(env, note, body.data, limits, settings);
+  if (!result.ok) return result.response;
+  await recordEvent(env, c.req.raw, "note_edited", { by: "owner" });
+  return jsonResponse({ ...publicItemPayload(result.note, true), message: "Note updated." });
+});
+
 meRoutes.delete("/api/me/shares/notes/:noteId", async (c) => {
   const env = c.env;
   const user = await getAuthenticatedUser(c.req.raw, env);
@@ -173,6 +207,37 @@ meRoutes.delete("/api/me/shares/notes/:noteId", async (c) => {
   }
   await recordEvent(env, c.req.raw, "note_deleted", { by: "owner" });
   return jsonResponse({ ok: true, message: "Note deleted." });
+});
+
+meRoutes.get("/api/me/shares/files/:groupId", async (c) => {
+  const env = c.env;
+  const user = await getAuthenticatedUser(c.req.raw, env);
+  if (!user) return jsonError("Sign in to manage your shares.", 401, "AUTH_REQUIRED");
+  const group = await getGroupById(env, c.req.param("groupId"));
+  if (!group || group.userId !== user.id) return jsonError("File not found.", 404, "NOT_FOUND");
+  const files = await getFilesForGroup(env, group.id);
+  return jsonResponse(await publicGroupPayload(env, group, files, true));
+});
+
+meRoutes.patch("/api/me/shares/files/:groupId", async (c) => {
+  const env = c.env;
+  const user = await getAuthenticatedUser(c.req.raw, env);
+  if (!user) return jsonError("Sign in to manage your shares.", 401, "AUTH_REQUIRED");
+  const group = await getGroupById(env, c.req.param("groupId"));
+  if (!group || group.userId !== user.id) return jsonError("File not found.", 404, "NOT_FOUND");
+  let form: FormData;
+  try {
+    form = await c.req.raw.formData();
+  } catch {
+    return jsonError("Could not read the request. Please try again.", 400, "INVALID_UPLOAD");
+  }
+  const settings = await getSiteSettings(env);
+  const limits = await getEffectiveLimits(env, user);
+  const existingFiles = await getFilesForGroup(env, group.id);
+  const result = await applyFileGroupEdit(env, group, existingFiles, form, limits, settings);
+  if (!result.ok) return result.response;
+  await recordEvent(env, c.req.raw, "file_edited", { by: "owner" });
+  return jsonResponse({ ...(await publicGroupPayload(env, result.group, result.files, true)), message: "File updated." });
 });
 
 meRoutes.delete("/api/me/shares/files/:groupId", async (c) => {
@@ -186,5 +251,51 @@ meRoutes.delete("/api/me/shares/files/:groupId", async (c) => {
   await deleteGroupAndFiles(env, group.id);
   await recordEvent(env, c.req.raw, "file_deleted", { by: "owner" });
   return jsonResponse({ ok: true, message: "File deleted." });
+});
+
+meRoutes.post("/api/me/shares/notes/:noteId/share-to-network", async (c) => {
+  const env = c.env;
+  const user = await getAuthenticatedUser(c.req.raw, env);
+  if (!user) return jsonError("Sign in to manage your shares.", 401, "AUTH_REQUIRED");
+  const note = await getNoteById(env, c.req.param("noteId"));
+  if (!note || note.userId !== user.id) return jsonError("Note not found.", 404, "NOT_FOUND");
+  if (note.burnAfterRead) {
+    return jsonError("Open once drops can't be shared to a network board.", 409, "BURN_AFTER_READ_NOT_SHAREABLE");
+  }
+  const settings = await getSiteSettings(env);
+  if (!settings.crossNetworkAddEnabled) {
+    return jsonError("Cross-network sharing is currently disabled.", 403, "CROSS_NETWORK_DISABLED");
+  }
+  const roomId = await getRoomId(c.req.raw, env.APP_SECRET);
+  const source = constantTimeEqual(roomId, note.roomId) ? "mine" : "received";
+  await publishNoteToRoom(env, note, roomId, source);
+  await recordEvent(env, c.req.raw, "note_shared_to_network", { by: "owner" });
+  return jsonResponse({
+    ok: true,
+    message: `Now visible on Nearby for the next ${formatServerDuration(settings.networkVisibilityTtlSeconds)}.`,
+  });
+});
+
+meRoutes.post("/api/me/shares/files/:groupId/share-to-network", async (c) => {
+  const env = c.env;
+  const user = await getAuthenticatedUser(c.req.raw, env);
+  if (!user) return jsonError("Sign in to manage your shares.", 401, "AUTH_REQUIRED");
+  const group = await getGroupById(env, c.req.param("groupId"));
+  if (!group || group.userId !== user.id) return jsonError("File not found.", 404, "NOT_FOUND");
+  if (group.burnAfterRead) {
+    return jsonError("Open once drops can't be shared to a network board.", 409, "BURN_AFTER_READ_NOT_SHAREABLE");
+  }
+  const settings = await getSiteSettings(env);
+  if (!settings.crossNetworkAddEnabled) {
+    return jsonError("Cross-network sharing is currently disabled.", 403, "CROSS_NETWORK_DISABLED");
+  }
+  const roomId = await getRoomId(c.req.raw, env.APP_SECRET);
+  const source = constantTimeEqual(roomId, group.roomId) ? "mine" : "received";
+  await publishGroupToRoom(env, group, roomId, source);
+  await recordEvent(env, c.req.raw, "file_shared_to_network", { by: "owner" });
+  return jsonResponse({
+    ok: true,
+    message: `Now visible on Nearby for the next ${formatServerDuration(settings.networkVisibilityTtlSeconds)}.`,
+  });
 });
 

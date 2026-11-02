@@ -8,7 +8,7 @@ This file is the onboarding doc for a fresh Claude Code session working on this 
 
 It started as a single-file Cloudflare Worker (`airtext-worker-modern.js`, "V1" — see `../` one level up, kept for reference/history), was rebuilt into a modular Hono app with accounts/roles/multi-file sharing ("V2"), and has since gone through a **V3 rewrite** (see `V3-PLAN.md` in this folder for the full plan): real per-page routing and SEO, a trimmed/reorganized admin-editable settings surface, a renamed product vocabulary ("Drop"/"Nearby"/"Receive"/"Open once"), a tier-based visual identity for logged-in users, and a fully rebuilt admin panel. V1 and the pre-V3 single-shell V2 structure are no longer live; this repo is the only thing running in production.
 
-**V3 is deployed and live** (as of 2026-07-26): migrations `0003_role_rename.sql` and `0004_audit_log.sql` are applied to production D1, the Worker is deployed, and a pre-deploy backup exists at `../backups/airtext-pre-v3-20260726-225743.sql`. Note: the working tree still has this entire V3 rewrite as **uncommitted changes** — nothing has been committed to git yet, so `git log`/`git diff` won't show it; treat the live filesystem state, not git history, as the source of truth until that changes.
+**V3 is deployed and live** (as of 2026-07-26): migrations `0003_role_rename.sql` and `0004_audit_log.sql` are applied to production D1, the Worker is deployed, and a pre-deploy backup exists at `../backups/airtext-pre-v3-20260726-225743.sql`. The V3 rewrite landed in git as commit `64cb875` ("airtext-v2: V3 rewrite -- real routing, tier system, admin revamp, bug fixes") on 2026-07-27 — `git log`/`git diff` now reflect it.
 
 ## Tech stack
 
@@ -232,7 +232,7 @@ Single IIFE, no framework. Key structures:
 - No "resend/forgot password" flow for Pro/Member accounts (by design, for now) — only self-service change-password while logged in (`PATCH /api/me/password`), plus admin-driven reset via the Users "Edit" form.
 - `GET /api/admin/drops` doesn't project `burn_after_read` per-row (only usable as a filter today), so the "Open once" badge can only render when that filter is active rather than always — flagged as a small follow-up.
 - Homepage hero title/subtitle/buttons still show pre-V3 wording in production — they're admin-editable `site_settings` values (Tier 2, see "Settings" above), and the old stored values persist across deploys by design. Update via `/admin` → Settings → Content, or reset those specific keys to `DEFAULT_SETTINGS` directly if picked up in a new session.
-- Nothing in this V3 rewrite has been committed to git yet — it's all live in the working tree and already deployed to production, but there's no commit/rollback point. Consider committing before making further changes, so there's a clean point to diff against or revert to.
+- (Resolved 2026-07-27) The V3 rewrite is now committed as `64cb875`, giving a clean diff/rollback point.
 
 ## Where to find more
 

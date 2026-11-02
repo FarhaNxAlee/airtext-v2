@@ -173,6 +173,21 @@ import { COPY } from "./copy.js";
         el.fileModalSharedBy = document.getElementById("file-modal-shared-by");
         el.fileModalList = document.getElementById("file-modal-list");
         el.deleteFileButton = document.getElementById("delete-file-button");
+        el.editFileButton = document.getElementById("edit-file-button");
+
+        el.editFileModal = document.getElementById("edit-file-modal");
+        el.editFileForm = document.getElementById("edit-file-form");
+        el.editFileError = document.getElementById("edit-file-error");
+        el.editFileTitle = document.getElementById("edit-file-title");
+        el.editFileExistingList = document.getElementById("edit-file-existing-list");
+        el.editFileInput = document.getElementById("edit-file-input");
+        el.editFileStagedList = document.getElementById("edit-file-staged-list");
+        el.editFileLockToggle = document.getElementById("edit-file-lock-toggle");
+        el.editFilePinFieldWrap = document.getElementById("edit-file-pin-field-wrap");
+        el.editFilePin = document.getElementById("edit-file-pin");
+        el.editFileBurnToggle = document.getElementById("edit-file-burn-toggle");
+        el.editFileTtlSelect = document.getElementById("edit-file-ttl-select");
+        el.editFileSubmit = document.getElementById("edit-file-submit");
 
         el.qrtoolForm = document.getElementById("qrtool-form");
         el.qrtoolInput = document.getElementById("qrtool-input");
@@ -206,6 +221,19 @@ import { COPY } from "./copy.js";
         el.modalText = document.getElementById("modal-text");
         el.modalSharedBy = document.getElementById("modal-shared-by");
         el.deleteButton = document.getElementById("delete-item-button");
+        el.editItemButton = document.getElementById("edit-item-button");
+
+        el.editItemModal = document.getElementById("edit-item-modal");
+        el.editItemForm = document.getElementById("edit-item-form");
+        el.editItemError = document.getElementById("edit-item-error");
+        el.editItemTitle = document.getElementById("edit-item-title");
+        el.editItemText = document.getElementById("edit-item-text");
+        el.editItemLockToggle = document.getElementById("edit-item-lock-toggle");
+        el.editItemPinFieldWrap = document.getElementById("edit-item-pin-field-wrap");
+        el.editItemPin = document.getElementById("edit-item-pin");
+        el.editItemBurnToggle = document.getElementById("edit-item-burn-toggle");
+        el.editItemTtlSelect = document.getElementById("edit-item-ttl-select");
+        el.editItemSubmit = document.getElementById("edit-item-submit");
 
         el.qrModal = document.getElementById("qr-modal");
         el.qrOutput = document.getElementById("qr-output");
@@ -335,6 +363,35 @@ import { COPY } from "./copy.js";
           });
         }
         if (el.unlockForm) el.unlockForm.addEventListener("submit", unlockCurrentItem);
+        if (el.editItemForm) el.editItemForm.addEventListener("submit", saveItemEdit);
+        if (el.editItemLockToggle) {
+          el.editItemLockToggle.addEventListener("change", function () {
+            if (state.editTarget) state.editTarget.lockTouched = true;
+            if (el.editItemPinFieldWrap) el.editItemPinFieldWrap.classList.toggle("hidden", !el.editItemLockToggle.checked);
+            if (el.editItemLockToggle.checked) window.setTimeout(function () { if (el.editItemPin) el.editItemPin.focus(); }, 60);
+            else if (el.editItemPin) el.editItemPin.value = "";
+          });
+        }
+        if (el.editItemBurnToggle) {
+          el.editItemBurnToggle.addEventListener("change", function () {
+            if (state.editTarget) state.editTarget.burnTouched = true;
+          });
+        }
+        if (el.editFileForm) el.editFileForm.addEventListener("submit", saveFileEdit);
+        if (el.editFileLockToggle) {
+          el.editFileLockToggle.addEventListener("change", function () {
+            if (state.editTarget) state.editTarget.lockTouched = true;
+            if (el.editFilePinFieldWrap) el.editFilePinFieldWrap.classList.toggle("hidden", !el.editFileLockToggle.checked);
+            if (el.editFileLockToggle.checked) window.setTimeout(function () { if (el.editFilePin) el.editFilePin.focus(); }, 60);
+            else if (el.editFilePin) el.editFilePin.value = "";
+          });
+        }
+        if (el.editFileBurnToggle) {
+          el.editFileBurnToggle.addEventListener("change", function () {
+            if (state.editTarget) state.editTarget.burnTouched = true;
+          });
+        }
+        if (el.editFileInput) el.editFileInput.addEventListener("change", function () { renderEditFileStagedList(); });
         if (el.feedbackForm) el.feedbackForm.addEventListener("submit", submitFeedback);
         if (el.notesSearch) el.notesSearch.addEventListener("input", renderLocalItems);
         if (el.notesFilter) el.notesFilter.addEventListener("change", renderLocalItems);
@@ -508,6 +565,12 @@ import { COPY } from "./copy.js";
           if (action === "close-item-modal") closeItemModal();
           if (action === "close-file-modal") closeFileModal();
           if (action === "close-qr-modal") closeQrModal();
+          if (action === "open-edit-item-modal" && state.currentItem) openEditItemModal(state.currentItem.id, "anonymous", state.currentItem);
+          if (action === "close-edit-item-modal") closeEditItemModal();
+          if (action === "open-edit-file-modal" && state.currentFile) openEditFileModal(state.currentFile.id, "anonymous", state.currentFile);
+          if (action === "close-edit-file-modal") closeEditFileModal();
+          var removeEditFileId = actionElement.getAttribute("data-remove-file-id");
+          if (action === "remove-edit-file" && removeEditFileId) toggleEditFileRemoval(removeEditFileId);
           if (action === "toggle-create-pin") togglePassword(el.sharePin);
           if (action === "copy-text") copyText(state.currentItem && state.currentItem.text, "Text copied.");
           if (action === "show-current-qr") showQrForCurrentItem();
@@ -562,6 +625,10 @@ import { COPY } from "./copy.js";
           var dropType = actionElement.getAttribute("data-drop-type");
           var dropId = actionElement.getAttribute("data-drop-id");
           if (action === "admin-delete-drop" && dropType && dropId) adminDeleteDrop(dropType, dropId);
+          if (action === "admin-edit-drop" && dropType && dropId) {
+            if (dropType === "file") openEditFileModal(dropId, "admin", { id: dropId, title: actionElement.getAttribute("data-drop-title") || "" });
+            else openEditItemModal(dropId, "admin", { id: dropId, title: actionElement.getAttribute("data-drop-title") || "" });
+          }
           if (action === "admin-drops-select-all") toggleSelectAllDrops(actionElement.checked);
           if (action === "admin-drops-select-row" && dropType && dropId) {
             toggleDropSelection(dropType, dropId, actionElement.checked);
@@ -587,11 +654,15 @@ import { COPY } from "./copy.js";
 
           var accountNoteId = actionElement.getAttribute("data-account-note-id");
           if (action === "account-delete-note" && accountNoteId) deleteAccountNote(accountNoteId);
+          if (action === "account-edit-note" && accountNoteId) editAccountNote(accountNoteId);
+          if (action === "account-share-note" && accountNoteId) shareAccountNoteToNetwork(accountNoteId);
           if (action === "account-qr-note" && accountNoteId) {
             showQr(actionElement.getAttribute("data-code"), window.location.origin + "/s/" + actionElement.getAttribute("data-code"));
           }
           var accountFileId = actionElement.getAttribute("data-account-file-id");
           if (action === "account-delete-file" && accountFileId) deleteAccountFile(accountFileId);
+          if (action === "account-edit-file" && accountFileId) editAccountFile(accountFileId);
+          if (action === "account-share-file" && accountFileId) shareAccountFileToNetwork(accountFileId);
           if (action === "account-qr-file" && accountFileId) {
             showQr(actionElement.getAttribute("data-code"), window.location.origin + "/f/" + actionElement.getAttribute("data-code"));
           }
@@ -603,11 +674,13 @@ import { COPY } from "./copy.js";
           }
         });
 
-        [el.itemModal, el.fileModal, el.qrModal, el.scannerModal].forEach(function (modal) {
+        [el.itemModal, el.fileModal, el.editItemModal, el.editFileModal, el.qrModal, el.scannerModal].forEach(function (modal) {
           modal.addEventListener("click", function (event) {
             if (event.target !== modal) return;
             if (modal === el.itemModal) closeItemModal();
             if (modal === el.fileModal) closeFileModal();
+            if (modal === el.editItemModal) closeEditItemModal();
+            if (modal === el.editFileModal) closeEditFileModal();
             if (modal === el.qrModal) closeQrModal();
             if (modal === el.scannerModal) closeScanner();
           });
@@ -734,13 +807,19 @@ import { COPY } from "./copy.js";
           var meta = document.createElement("div");
           meta.className = "note-meta";
           var sourceBadge = document.createElement("span");
-          sourceBadge.className = "note-badge";
+          sourceBadge.className = "note-badge " + (item.source === "received" ? "badge-received" : "badge-mine");
           sourceBadge.textContent = item.source === "received" ? "Received" : "Mine";
           var lockBadge = document.createElement("span");
-          lockBadge.className = "note-badge";
+          lockBadge.className = "note-badge" + (item.locked ? " badge-locked" : "");
           lockBadge.textContent = item.locked ? "PIN locked" : "Open";
           meta.appendChild(sourceBadge);
           meta.appendChild(lockBadge);
+          if (item.burnAfterRead) {
+            var burnBadge = document.createElement("span");
+            burnBadge.className = "note-badge badge-burn";
+            burnBadge.textContent = "Open once";
+            meta.appendChild(burnBadge);
+          }
           var sharedByBadge = buildSharedByBadge(item.sharedBy, card);
           if (sharedByBadge) meta.appendChild(sharedByBadge);
 
@@ -997,6 +1076,10 @@ import { COPY } from "./copy.js";
         var token = getDeleteToken(itemId);
         el.deleteButton.classList.toggle("hidden", !token);
         el.deleteButton.classList.toggle("inline-flex", Boolean(token));
+        if (el.editItemButton) {
+          el.editItemButton.classList.toggle("hidden", !token);
+          el.editItemButton.classList.toggle("inline-flex", Boolean(token));
+        }
       }
 
       function showQrForCurrentItem() {
@@ -1165,10 +1248,10 @@ import { COPY } from "./copy.js";
           var meta = document.createElement("div");
           meta.className = "note-meta";
           var sourceBadge = document.createElement("span");
-          sourceBadge.className = "note-badge";
+          sourceBadge.className = "note-badge " + (item.source === "received" ? "badge-received" : "badge-mine");
           sourceBadge.textContent = item.source === "received" ? "Received" : "Mine";
           var lockBadge = document.createElement("span");
-          lockBadge.className = "note-badge";
+          lockBadge.className = "note-badge" + (item.locked ? " badge-locked" : "");
           lockBadge.textContent = item.locked ? "PIN locked" : "Open";
           var sizeBadge = document.createElement("span");
           sizeBadge.className = "note-badge";
@@ -1176,6 +1259,12 @@ import { COPY } from "./copy.js";
           meta.appendChild(sourceBadge);
           meta.appendChild(lockBadge);
           meta.appendChild(sizeBadge);
+          if (item.burnAfterRead) {
+            var burnBadge = document.createElement("span");
+            burnBadge.className = "note-badge badge-burn";
+            burnBadge.textContent = "Open once";
+            meta.appendChild(burnBadge);
+          }
           var sharedByBadge = buildSharedByBadge(item.sharedBy, card);
           if (sharedByBadge) meta.appendChild(sharedByBadge);
 
@@ -1368,6 +1457,335 @@ import { COPY } from "./copy.js";
         }
       }
 
+      /* --- Edit-in-place (notes): shared across all three auth tiers
+       *  (anonymous via delete-token, owner via session, admin via bypass).
+       *  For the admin tier there's no full-detail prefetch, so locked/
+       *  burnAfterRead are only included in the saved patch if the admin
+       *  actually touched that toggle -- otherwise they're left out of the
+       *  patch entirely so the server's "omitted = unchanged" semantics
+       *  protect against silently clearing an existing PIN or burn flag. */
+
+      function applyItemEditPrefill(item) {
+        if (!item) return;
+        if (typeof item.title === "string") el.editItemTitle.value = item.title;
+        if (typeof item.text === "string") el.editItemText.value = item.text;
+        if (typeof item.locked === "boolean") {
+          el.editItemLockToggle.checked = item.locked;
+          if (el.editItemPinFieldWrap) el.editItemPinFieldWrap.classList.toggle("hidden", !item.locked);
+        }
+        if (typeof item.burnAfterRead === "boolean") el.editItemBurnToggle.checked = item.burnAfterRead;
+      }
+
+      async function openEditItemModal(itemId, tier, prefillData) {
+        state.editTarget = { kind: "note", tier: tier, id: itemId, lockTouched: false, burnTouched: false };
+        if (el.editItemError) el.editItemError.classList.add("hidden");
+        el.editItemTitle.value = "";
+        el.editItemText.value = "";
+        el.editItemLockToggle.checked = false;
+        if (el.editItemPinFieldWrap) el.editItemPinFieldWrap.classList.add("hidden");
+        el.editItemPin.value = "";
+        el.editItemBurnToggle.checked = false;
+        el.editItemTtlSelect.value = "";
+        el.editItemSubmit.disabled = false;
+        el.editItemSubmit.textContent = "Save changes";
+
+        applyItemEditPrefill(prefillData);
+
+        el.editItemModal.classList.remove("hidden");
+        el.editItemModal.classList.add("flex");
+        el.editItemModal.setAttribute("aria-hidden", "false");
+        lockBodyScroll();
+
+        if (tier === "owner") {
+          try {
+            var response = await apiFetch("/api/me/shares/notes/" + encodeURIComponent(itemId));
+            applyItemEditPrefill(response.item);
+          } catch (error) {
+            toast(error.message || "Unable to load this note for editing.", "error");
+          }
+        }
+      }
+
+      function closeEditItemModal() {
+        el.editItemModal.classList.add("hidden");
+        el.editItemModal.classList.remove("flex");
+        el.editItemModal.setAttribute("aria-hidden", "true");
+        state.editTarget = null;
+        unlockBodyScrollIfClear();
+      }
+
+      function collectItemEditPatch(target) {
+        var patch = {};
+        var title = el.editItemTitle.value.trim();
+        if (title) patch.title = title;
+        var text = el.editItemText.value;
+        if (text.trim()) patch.text = text;
+
+        var lockKnown = target.tier !== "admin";
+        if (lockKnown || target.lockTouched) {
+          patch.locked = el.editItemLockToggle.checked;
+          if (patch.locked) {
+            var pin = el.editItemPin.value.trim();
+            if (pin) patch.pin = pin;
+          }
+        }
+        var burnKnown = target.tier !== "admin";
+        if (burnKnown || target.burnTouched) {
+          patch.burnAfterRead = el.editItemBurnToggle.checked;
+        }
+        var ttl = el.editItemTtlSelect.value;
+        if (ttl) patch.ttlSeconds = Number(ttl);
+        return patch;
+      }
+
+      async function saveItemEdit(event) {
+        event.preventDefault();
+        if (!state.editTarget || state.editTarget.kind !== "note") return;
+        var target = state.editTarget;
+        var patch = collectItemEditPatch(target);
+
+        el.editItemSubmit.disabled = true;
+        el.editItemSubmit.textContent = "Saving…";
+        try {
+          var response;
+          if (target.tier === "anonymous") {
+            var token = getDeleteToken(target.id);
+            if (!token) throw new Error("This browser does not own the delete token.");
+            patch.deleteToken = token;
+            response = await apiFetch("/api/item/" + encodeURIComponent(target.id), {
+              method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify(patch)
+            });
+          } else if (target.tier === "owner") {
+            response = await apiFetch("/api/me/shares/notes/" + encodeURIComponent(target.id), {
+              method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify(patch)
+            });
+          } else {
+            response = await adminFetch("/api/admin/item/" + encodeURIComponent(target.id), {
+              method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify(patch)
+            });
+          }
+          toast(response.message || "Note updated.", "success");
+          closeEditItemModal();
+          if (target.tier === "anonymous") {
+            var existing = state.items.find(function (entry) { return entry.id === target.id; });
+            if (existing) Object.assign(existing, response.item);
+            renderLocalItems();
+          } else if (target.tier === "owner") {
+            await loadAccountShares();
+          } else {
+            await loadAdminDrops();
+          }
+        } catch (error) {
+          if (el.editItemError) {
+            el.editItemError.textContent = error.message || "Unable to save changes.";
+            el.editItemError.classList.remove("hidden");
+          } else {
+            toast(error.message || "Unable to save changes.", "error");
+          }
+        } finally {
+          el.editItemSubmit.disabled = false;
+          el.editItemSubmit.textContent = "Save changes";
+        }
+      }
+
+      async function editAccountNote(noteId) {
+        await openEditItemModal(noteId, "owner", null);
+      }
+
+      async function shareAccountNoteToNetwork(noteId) {
+        try {
+          var response = await apiFetch("/api/me/shares/notes/" + encodeURIComponent(noteId) + "/share-to-network", { method: "POST" });
+          toast(response.message || "Shared to this network.", "success");
+        } catch (error) {
+          toast(error.message || "Unable to share to this network.", "error");
+        }
+      }
+
+      /* --- Edit-in-place (files): same three-tier shape as notes above,
+       *  plus an existing-files remove list and a staged-new-files input. */
+
+      function renderEditFileExistingList() {
+        if (!el.editFileExistingList) return;
+        el.editFileExistingList.textContent = "";
+        var target = state.editTarget;
+        if (!target || !target.existingFiles) return;
+        target.existingFiles.forEach(function (file) {
+          var removed = target.removeFileIds.indexOf(file.id) !== -1;
+          var row = document.createElement("div");
+          row.className = "flex items-center justify-between gap-2 rounded-lg border border-white/10 bg-black/20 px-3 py-2";
+          var label = document.createElement("span");
+          label.className = "truncate " + (removed ? "text-slate-600 line-through" : "text-slate-300");
+          label.textContent = file.filename;
+          var button = document.createElement("button");
+          button.type = "button";
+          button.className = "shrink-0 text-xs " + (removed ? "text-cyan-400" : "text-red-300");
+          button.setAttribute("data-action", "remove-edit-file");
+          button.setAttribute("data-remove-file-id", file.id);
+          button.textContent = removed ? "Undo" : "Remove";
+          row.appendChild(label);
+          row.appendChild(button);
+          el.editFileExistingList.appendChild(row);
+        });
+      }
+
+      function toggleEditFileRemoval(fileId) {
+        var target = state.editTarget;
+        if (!target || target.kind !== "file") return;
+        var index = target.removeFileIds.indexOf(fileId);
+        if (index === -1) target.removeFileIds.push(fileId);
+        else target.removeFileIds.splice(index, 1);
+        renderEditFileExistingList();
+      }
+
+      function renderEditFileStagedList() {
+        if (!el.editFileStagedList || !el.editFileInput) return;
+        var files = el.editFileInput.files ? Array.from(el.editFileInput.files) : [];
+        el.editFileStagedList.textContent = "";
+        if (!files.length) {
+          el.editFileStagedList.classList.add("hidden");
+          return;
+        }
+        el.editFileStagedList.classList.remove("hidden");
+        files.forEach(function (file) {
+          var row = document.createElement("div");
+          row.className = "truncate";
+          row.textContent = "+ " + file.name + " (" + formatBytes(file.size) + ")";
+          el.editFileStagedList.appendChild(row);
+        });
+      }
+
+      function applyFileEditPrefill(group) {
+        if (!group) return;
+        if (typeof group.title === "string") el.editFileTitle.value = group.title;
+        if (typeof group.locked === "boolean") {
+          el.editFileLockToggle.checked = group.locked;
+          if (el.editFilePinFieldWrap) el.editFilePinFieldWrap.classList.toggle("hidden", !group.locked);
+        }
+        if (typeof group.burnAfterRead === "boolean") el.editFileBurnToggle.checked = group.burnAfterRead;
+        if (Array.isArray(group.files) && state.editTarget) {
+          state.editTarget.existingFiles = group.files.map(function (file) { return { id: file.id, filename: file.filename }; });
+          renderEditFileExistingList();
+        }
+      }
+
+      async function openEditFileModal(groupId, tier, prefillData) {
+        state.editTarget = { kind: "file", tier: tier, id: groupId, existingFiles: [], removeFileIds: [], lockTouched: false, burnTouched: false };
+        if (el.editFileError) el.editFileError.classList.add("hidden");
+        el.editFileTitle.value = "";
+        el.editFileLockToggle.checked = false;
+        if (el.editFilePinFieldWrap) el.editFilePinFieldWrap.classList.add("hidden");
+        el.editFilePin.value = "";
+        el.editFileBurnToggle.checked = false;
+        el.editFileTtlSelect.value = "";
+        if (el.editFileInput) el.editFileInput.value = "";
+        renderEditFileStagedList();
+        renderEditFileExistingList();
+        el.editFileSubmit.disabled = false;
+        el.editFileSubmit.textContent = "Save changes";
+
+        applyFileEditPrefill(prefillData);
+
+        el.editFileModal.classList.remove("hidden");
+        el.editFileModal.classList.add("flex");
+        el.editFileModal.setAttribute("aria-hidden", "false");
+        lockBodyScroll();
+
+        if (tier === "owner") {
+          try {
+            var response = await apiFetch("/api/me/shares/files/" + encodeURIComponent(groupId));
+            applyFileEditPrefill(response.group);
+          } catch (error) {
+            toast(error.message || "Unable to load this file share for editing.", "error");
+          }
+        }
+      }
+
+      function closeEditFileModal() {
+        el.editFileModal.classList.add("hidden");
+        el.editFileModal.classList.remove("flex");
+        el.editFileModal.setAttribute("aria-hidden", "true");
+        state.editTarget = null;
+        unlockBodyScrollIfClear();
+      }
+
+      async function saveFileEdit(event) {
+        event.preventDefault();
+        if (!state.editTarget || state.editTarget.kind !== "file") return;
+        var target = state.editTarget;
+
+        var form = new FormData();
+        var title = el.editFileTitle.value.trim();
+        if (title) form.set("title", title);
+
+        var lockKnown = target.tier !== "admin";
+        if (lockKnown || target.lockTouched) {
+          form.set("locked", el.editFileLockToggle.checked ? "1" : "0");
+          if (el.editFileLockToggle.checked) {
+            var pin = el.editFilePin.value.trim();
+            if (pin) form.set("pin", pin);
+          }
+        }
+        var burnKnown = target.tier !== "admin";
+        if (burnKnown || target.burnTouched) {
+          form.set("burnAfterRead", el.editFileBurnToggle.checked ? "1" : "0");
+        }
+        var ttl = el.editFileTtlSelect.value;
+        if (ttl) form.set("ttlSeconds", ttl);
+        if (target.removeFileIds.length) form.set("removeFileIds", JSON.stringify(target.removeFileIds));
+        var newFiles = el.editFileInput && el.editFileInput.files ? Array.from(el.editFileInput.files) : [];
+        newFiles.forEach(function (file) { form.append("file", file); });
+
+        el.editFileSubmit.disabled = true;
+        el.editFileSubmit.textContent = "Saving…";
+        try {
+          var response;
+          if (target.tier === "anonymous") {
+            var token = getDeleteToken("file:" + target.id);
+            if (!token) throw new Error("This browser does not own the delete token.");
+            form.set("deleteToken", token);
+            response = await apiFetch("/api/file/" + encodeURIComponent(target.id), { method: "PATCH", body: form });
+          } else if (target.tier === "owner") {
+            response = await apiFetch("/api/me/shares/files/" + encodeURIComponent(target.id), { method: "PATCH", body: form });
+          } else {
+            response = await adminFetch("/api/admin/file/" + encodeURIComponent(target.id), { method: "PATCH", body: form });
+          }
+          toast(response.message || "File updated.", "success");
+          closeEditFileModal();
+          if (target.tier === "anonymous") {
+            var existing = state.files.find(function (entry) { return entry.id === target.id; });
+            if (existing) Object.assign(existing, response.group);
+            renderFilesBoard();
+          } else if (target.tier === "owner") {
+            await loadAccountShares();
+          } else {
+            await loadAdminDrops();
+          }
+        } catch (error) {
+          if (el.editFileError) {
+            el.editFileError.textContent = error.message || "Unable to save changes.";
+            el.editFileError.classList.remove("hidden");
+          } else {
+            toast(error.message || "Unable to save changes.", "error");
+          }
+        } finally {
+          el.editFileSubmit.disabled = false;
+          el.editFileSubmit.textContent = "Save changes";
+        }
+      }
+
+      async function editAccountFile(groupId) {
+        await openEditFileModal(groupId, "owner", null);
+      }
+
+      async function shareAccountFileToNetwork(groupId) {
+        try {
+          var response = await apiFetch("/api/me/shares/files/" + encodeURIComponent(groupId) + "/share-to-network", { method: "POST" });
+          toast(response.message || "Shared to this network.", "success");
+        } catch (error) {
+          toast(error.message || "Unable to share to this network.", "error");
+        }
+      }
+
       function openFileModal() {
         state.currentFile = null;
         el.fileModalTitle.textContent = "Opening file";
@@ -1421,6 +1839,10 @@ import { COPY } from "./copy.js";
         var token = getDeleteToken("file:" + fileId);
         el.deleteFileButton.classList.toggle("hidden", !token);
         el.deleteFileButton.classList.toggle("inline-flex", Boolean(token));
+        if (el.editFileButton) {
+          el.editFileButton.classList.toggle("hidden", !token);
+          el.editFileButton.classList.toggle("inline-flex", Boolean(token));
+        }
       }
 
       function showQrForCurrentFile() {
@@ -2229,9 +2651,15 @@ import { COPY } from "./copy.js";
           var meta = document.createElement("div");
           meta.className = "note-meta";
           var lockBadge = document.createElement("span");
-          lockBadge.className = "note-badge";
+          lockBadge.className = "note-badge" + (note.locked ? " badge-locked" : "");
           lockBadge.textContent = note.locked ? "PIN locked" : "Open";
           meta.appendChild(lockBadge);
+          if (note.burnAfterRead) {
+            var burnBadge = document.createElement("span");
+            burnBadge.className = "note-badge badge-burn";
+            burnBadge.textContent = "Open once";
+            meta.appendChild(burnBadge);
+          }
           var title = document.createElement("h3");
           title.className = "note-title";
           title.textContent = note.title;
@@ -2258,6 +2686,18 @@ import { COPY } from "./copy.js";
           qrButton.setAttribute("data-code", note.code);
           qrButton.setAttribute("aria-label", "Show share code and QR");
           qrButton.innerHTML = '<svg viewBox="0 0 24 24" class="h-4 w-4"><use href="#i-qr-grid"></use></svg>';
+          var editButton = document.createElement("button");
+          editButton.type = "button";
+          editButton.className = "rounded-md border border-[var(--line)] px-3 py-1.5 text-xs";
+          editButton.setAttribute("data-action", "account-edit-note");
+          editButton.setAttribute("data-account-note-id", note.id);
+          editButton.textContent = "Edit";
+          var shareButton = document.createElement("button");
+          shareButton.type = "button";
+          shareButton.className = "rounded-md border border-[var(--line)] px-3 py-1.5 text-xs";
+          shareButton.setAttribute("data-action", "account-share-note");
+          shareButton.setAttribute("data-account-note-id", note.id);
+          shareButton.textContent = "Share to this network";
           var deleteButton = document.createElement("button");
           deleteButton.type = "button";
           deleteButton.className = "rounded-md border border-red-500/30 px-3 py-1.5 text-xs text-red-300";
@@ -2266,6 +2706,8 @@ import { COPY } from "./copy.js";
           deleteButton.textContent = "Delete";
           actions.appendChild(copyButton);
           actions.appendChild(qrButton);
+          actions.appendChild(editButton);
+          if (!note.burnAfterRead) actions.appendChild(shareButton);
           actions.appendChild(deleteButton);
           row.appendChild(titleWrap);
           row.appendChild(actions);
@@ -2290,13 +2732,19 @@ import { COPY } from "./copy.js";
           var meta = document.createElement("div");
           meta.className = "note-meta";
           var lockBadge = document.createElement("span");
-          lockBadge.className = "note-badge";
+          lockBadge.className = "note-badge" + (group.locked ? " badge-locked" : "");
           lockBadge.textContent = group.locked ? "PIN locked" : "Open";
           meta.appendChild(lockBadge);
           var countBadge = document.createElement("span");
           countBadge.className = "note-badge";
           countBadge.textContent = group.fileCount + (group.fileCount === 1 ? " file" : " files") + " · " + formatBytes(group.totalSizeBytes);
           meta.appendChild(countBadge);
+          if (group.burnAfterRead) {
+            var burnBadge = document.createElement("span");
+            burnBadge.className = "note-badge badge-burn";
+            burnBadge.textContent = "Open once";
+            meta.appendChild(burnBadge);
+          }
           var title = document.createElement("h3");
           title.className = "note-title";
           title.textContent = group.title;
@@ -2323,6 +2771,18 @@ import { COPY } from "./copy.js";
           qrButton.setAttribute("data-code", group.code);
           qrButton.setAttribute("aria-label", "Show share code and QR");
           qrButton.innerHTML = '<svg viewBox="0 0 24 24" class="h-4 w-4"><use href="#i-qr-grid"></use></svg>';
+          var editButton = document.createElement("button");
+          editButton.type = "button";
+          editButton.className = "rounded-md border border-[var(--line)] px-3 py-1.5 text-xs";
+          editButton.setAttribute("data-action", "account-edit-file");
+          editButton.setAttribute("data-account-file-id", group.id);
+          editButton.textContent = "Edit";
+          var shareButton = document.createElement("button");
+          shareButton.type = "button";
+          shareButton.className = "rounded-md border border-[var(--line)] px-3 py-1.5 text-xs";
+          shareButton.setAttribute("data-action", "account-share-file");
+          shareButton.setAttribute("data-account-file-id", group.id);
+          shareButton.textContent = "Share to this network";
           var deleteButton = document.createElement("button");
           deleteButton.type = "button";
           deleteButton.className = "rounded-md border border-red-500/30 px-3 py-1.5 text-xs text-red-300";
@@ -2331,6 +2791,8 @@ import { COPY } from "./copy.js";
           deleteButton.textContent = "Delete";
           actions.appendChild(copyButton);
           actions.appendChild(qrButton);
+          actions.appendChild(editButton);
+          if (!group.burnAfterRead) actions.appendChild(shareButton);
           actions.appendChild(deleteButton);
           row.appendChild(titleWrap);
           row.appendChild(actions);
@@ -2865,6 +3327,14 @@ import { COPY } from "./copy.js";
 
           var actions = document.createElement("div");
           actions.className = "admin-row-actions";
+          var editButton = document.createElement("button");
+          editButton.type = "button";
+          editButton.className = "rounded-md border border-[var(--line)] px-3 py-2 text-xs";
+          editButton.setAttribute("data-action", "admin-edit-drop");
+          editButton.setAttribute("data-drop-type", item.type);
+          editButton.setAttribute("data-drop-id", item.id);
+          editButton.setAttribute("data-drop-title", item.title);
+          editButton.textContent = "Edit";
           var deleteButton = document.createElement("button");
           deleteButton.type = "button";
           deleteButton.className = "rounded-md border border-red-500/30 px-3 py-2 text-xs text-red-300";
@@ -2872,6 +3342,7 @@ import { COPY } from "./copy.js";
           deleteButton.setAttribute("data-drop-type", item.type);
           deleteButton.setAttribute("data-drop-id", item.id);
           deleteButton.textContent = "Delete";
+          actions.appendChild(editButton);
           actions.appendChild(deleteButton);
 
           row.appendChild(checkbox);
@@ -3818,6 +4289,9 @@ import { COPY } from "./copy.js";
             ["allowedFileExtensions", "Allowed extensions (comma-separated, blank = all)"],
             ["blockedFileExtensions", "Blocked extensions (comma-separated)"]
           ], "limits"],
+          ["Network visibility", [
+            ["networkVisibilityTtlSeconds", "Nearby board visibility (seconds)", "number", 600, 172800]
+          ], "limits"],
           ["QR link generator", [
             ["qrLinkToolEnabled", "Enable standalone QR tool", "checkbox"]
           ], "limits"],
@@ -4398,7 +4872,7 @@ import { COPY } from "./copy.js";
       }
 
       function unlockBodyScrollIfClear() {
-        var anyOpen = [el.itemModal, el.fileModal, el.qrModal, el.scannerModal].some(function (modal) {
+        var anyOpen = [el.itemModal, el.fileModal, el.editItemModal, el.editFileModal, el.qrModal, el.scannerModal].some(function (modal) {
           return !modal.classList.contains("hidden");
         });
         if (el.drawer && el.drawer.classList.contains("open")) anyOpen = true;

@@ -2,7 +2,9 @@ import { Hono } from "hono";
 import type { Env } from "../types";
 import { CONFIG } from "../lib/config";
 import { getSiteSettings } from "../lib/settings";
+import type { SiteSettings } from "../lib/settings";
 import { getEffectiveLimits } from "../lib/limits";
+import type { EffectiveLimits } from "../lib/limits";
 import { jsonResponse, jsonError, readJsonBody } from "../lib/http";
 import { hmacHex, hashPin, constantTimeEqual, randomBase64Url, randomShareCode } from "../lib/crypto";
 import { normalizeTitle, normalizeText, normalizeShareCode, formatServerDuration, isExpired } from "../lib/util";
@@ -110,6 +112,20 @@ async function addNoteToRoom(env: Env, note: NoteRow, roomId: string, source: "m
     .run();
 }
 
+/** Owner-initiated "Share to this network" (unlike addNoteToRoom's automatic,
+ *  first-add-only INSERT OR IGNORE): refreshes added_at even if the room
+ *  already has this note, so re-sharing after the visibility window has
+ *  elapsed (see networkVisibilityTtlSeconds) actually makes it reappear. */
+async function publishNoteToRoom(env: Env, note: NoteRow, roomId: string, source: "mine" | "received"): Promise<void> {
+  if (!note || isExpired(note)) return;
+  await env.DB.prepare(
+    `INSERT INTO network_notes (room_id, note_id, source, added_at) VALUES (?, ?, ?, ?)
+     ON CONFLICT(room_id, note_id) DO UPDATE SET added_at = excluded.added_at, source = excluded.source`,
+  )
+    .bind(roomId, note.id, source === "received" ? "received" : "mine", Date.now())
+    .run();
+}
+
 async function createUniqueShareCode(env: Env): Promise<string> {
   for (let attempt = 0; attempt < 10; attempt += 1) {
     const code = randomShareCode(CONFIG.SHARE_CODE_LENGTH);
@@ -143,10 +159,102 @@ function publicItemPayload(note: NoteRow, includeText: boolean) {
       code: note.code,
       createdAt: Number(note.createdAt),
       expiresAt: Number(note.expiresAt),
+      burnAfterRead: Boolean(note.burnAfterRead),
       ...(note.sharedBy ? { sharedBy: note.sharedBy } : {}),
       ...(includeText ? { text: note.text } : {}),
     },
   };
+}
+
+export interface NoteEditPatch {
+  title?: string;
+  text?: string;
+  locked?: boolean;
+  pin?: string;
+  burnAfterRead?: boolean;
+  ttlSeconds?: number;
+}
+
+/** Shared mutation core for all three edit-in-place tiers (anonymous
+ *  delete-token, owner, admin) -- each route only differs in how it
+ *  authorizes access to `note`, then delegates here. Mirrors POST
+ *  /api/items' validation exactly. code and delete_token_hash are never
+ *  touched -- editing a drop never changes its share identity. */
+async function applyNoteEdit(
+  env: Env,
+  note: NoteRow,
+  patch: NoteEditPatch,
+  limits: EffectiveLimits,
+  settings: SiteSettings,
+): Promise<{ ok: true; note: NoteRow } | { ok: false; response: Response }> {
+  let title = note.title;
+  if (patch.title !== undefined) {
+    title = normalizeTitle(patch.title);
+    if (!title) return { ok: false, response: jsonError("Please enter a title.", 400, "TITLE_REQUIRED") };
+    if (title.length > settings.maxTitleLength) {
+      return { ok: false, response: jsonError(`Title must be ${settings.maxTitleLength} characters or fewer.`, 400, "TITLE_TOO_LONG") };
+    }
+  }
+
+  let text = note.text;
+  if (patch.text !== undefined) {
+    text = normalizeText(patch.text);
+    if (!text) return { ok: false, response: jsonError("Please enter text to share.", 400, "TEXT_REQUIRED") };
+    if (text.length > limits.maxTextLength) {
+      return { ok: false, response: jsonError(`Text must be ${limits.maxTextLength.toLocaleString()} characters or fewer.`, 400, "TEXT_TOO_LONG") };
+    }
+  }
+
+  let locked = note.locked;
+  let pinSalt = note.pinSalt;
+  let pinHash = note.pinHash;
+  if (patch.locked !== undefined) {
+    const wantsLock = settings.pinEnabled && Boolean(patch.locked);
+    if (!wantsLock) {
+      locked = false;
+      pinSalt = null;
+      pinHash = null;
+    } else {
+      const pin = typeof patch.pin === "string" ? patch.pin.trim() : "";
+      if (pin) {
+        if (pin.length < CONFIG.MIN_PIN_LENGTH || pin.length > CONFIG.MAX_PIN_LENGTH) {
+          return {
+            ok: false,
+            response: jsonError(`PIN must be between ${CONFIG.MIN_PIN_LENGTH} and ${CONFIG.MAX_PIN_LENGTH} characters.`, 400, "INVALID_PIN_LENGTH"),
+          };
+        }
+        pinSalt = randomBase64Url(18);
+        pinHash = await hashPin(env.APP_SECRET, pinSalt, pin);
+        locked = true;
+      } else if (locked) {
+        // Already locked and no new PIN supplied -- keep the existing PIN untouched.
+        locked = true;
+      } else {
+        return {
+          ok: false,
+          response: jsonError(`PIN must be between ${CONFIG.MIN_PIN_LENGTH} and ${CONFIG.MAX_PIN_LENGTH} characters.`, 400, "INVALID_PIN_LENGTH"),
+        };
+      }
+    }
+  }
+
+  const burnAfterRead = patch.burnAfterRead !== undefined ? Boolean(patch.burnAfterRead) : note.burnAfterRead;
+
+  let expiresAt = note.expiresAt;
+  if (patch.ttlSeconds !== undefined) {
+    const requested = Number(patch.ttlSeconds);
+    if (Number.isFinite(requested) && requested > 0) {
+      expiresAt = Date.now() + Math.min(Math.floor(requested), limits.ttlSeconds) * 1000;
+    }
+  }
+
+  await env.DB.prepare(
+    "UPDATE notes SET title = ?, body = ?, locked = ?, pin_salt = ?, pin_hash = ?, burn_after_read = ?, expires_at = ? WHERE id = ?",
+  )
+    .bind(title, text, locked ? 1 : 0, pinSalt, pinHash, burnAfterRead ? 1 : 0, expiresAt, note.id)
+    .run();
+
+  return { ok: true, note: { ...note, title, text, locked, pinSalt, pinHash, burnAfterRead, expiresAt } };
 }
 
 async function verifyPin(request: Request, env: Env, note: NoteRow): Promise<{ ok: true } | { ok: false; response: Response }> {
@@ -183,19 +291,20 @@ export const notesRoutes = new Hono<{ Bindings: Env }>();
 notesRoutes.get("/api/local/items", async (c) => {
   const settings = await getSiteSettings(c.env);
   const roomId = await getRoomId(c.req.raw, c.env.APP_SECRET);
+  const visibilityCutoff = Date.now() - settings.networkVisibilityTtlSeconds * 1000;
   const result = await c.env.DB.prepare(
-    `SELECT n.id, n.title, n.locked, n.code, n.created_at, n.expires_at,
+    `SELECT n.id, n.title, n.locked, n.code, n.created_at, n.expires_at, n.burn_after_read,
             nn.added_at, nn.source, ${SHARED_BY_COLUMNS}
      FROM network_notes nn
      JOIN notes n ON n.id = nn.note_id
      ${SHARED_BY_JOIN}
-     WHERE nn.room_id = ? AND n.expires_at > ?
+     WHERE nn.room_id = ? AND n.expires_at > ? AND nn.added_at > ?
      ORDER BY nn.added_at DESC
      LIMIT ?`,
   )
-    .bind(roomId, Date.now(), settings.maxLocalItems)
+    .bind(roomId, Date.now(), visibilityCutoff, settings.maxLocalItems)
     .all<{
-      id: string; title: string; locked: number; code: string; created_at: number; expires_at: number;
+      id: string; title: string; locked: number; code: string; created_at: number; expires_at: number; burn_after_read: number;
       added_at: number; source: string; shared_by_name: string | null; shared_by_role: string | null; shared_by_rank: number | null;
     }>();
 
@@ -209,6 +318,7 @@ notesRoutes.get("/api/local/items", async (c) => {
       createdAt: Number(row.created_at || 0),
       addedAt: Number(row.added_at || row.created_at || 0),
       expiresAt: Number(row.expires_at || 0),
+      burnAfterRead: Boolean(row.burn_after_read),
       source: row.source === "received" ? "received" : "mine",
       ...(row.shared_by_name
         ? { sharedBy: { name: row.shared_by_name, role: row.shared_by_role || "", rank: Number(row.shared_by_rank) } }
@@ -227,17 +337,19 @@ notesRoutes.get("/api/local/items", async (c) => {
  *  second round-trip to files.ts. */
 notesRoutes.get("/api/local/count", async (c) => {
   const env = c.env;
+  const settings = await getSiteSettings(env);
   const roomId = await getRoomId(c.req.raw, env.APP_SECRET);
   const now = Date.now();
+  const visibilityCutoff = now - settings.networkVisibilityTtlSeconds * 1000;
   const noteCountRow = await env.DB.prepare(
-    `SELECT COUNT(*) AS count FROM network_notes nn JOIN notes n ON n.id = nn.note_id WHERE nn.room_id = ? AND n.expires_at > ?`,
+    `SELECT COUNT(*) AS count FROM network_notes nn JOIN notes n ON n.id = nn.note_id WHERE nn.room_id = ? AND n.expires_at > ? AND nn.added_at > ?`,
   )
-    .bind(roomId, now)
+    .bind(roomId, now, visibilityCutoff)
     .first<{ count: number }>();
   const fileCountRow = await env.DB.prepare(
-    `SELECT COUNT(*) AS count FROM network_files nf JOIN file_groups g ON g.id = nf.group_id WHERE nf.room_id = ? AND g.expires_at > ?`,
+    `SELECT COUNT(*) AS count FROM network_files nf JOIN file_groups g ON g.id = nf.group_id WHERE nf.room_id = ? AND g.expires_at > ? AND nf.added_at > ?`,
   )
-    .bind(roomId, now)
+    .bind(roomId, now, visibilityCutoff)
     .first<{ count: number }>();
   const count = Number(noteCountRow?.count || 0) + Number(fileCountRow?.count || 0);
   return jsonResponse({ ok: true, count });
@@ -364,14 +476,15 @@ notesRoutes.post("/api/items", async (c) => {
 notesRoutes.get("/api/local/item/:itemId", async (c) => {
   const env = c.env;
   const itemId = c.req.param("itemId");
+  const settings = await getSiteSettings(env);
   const roomId = await getRoomId(c.req.raw, env.APP_SECRET);
   const row = await env.DB.prepare(
     `SELECT n.*, ${SHARED_BY_COLUMNS} FROM notes n
      JOIN network_notes nn ON nn.note_id = n.id
      ${SHARED_BY_JOIN}
-     WHERE n.id = ? AND nn.room_id = ? AND n.expires_at > ?`,
+     WHERE n.id = ? AND nn.room_id = ? AND n.expires_at > ? AND nn.added_at > ?`,
   )
-    .bind(itemId, roomId, Date.now())
+    .bind(itemId, roomId, Date.now(), Date.now() - settings.networkVisibilityTtlSeconds * 1000)
     .first<RawNoteRow>();
   const note = rowToNote(row);
   if (!note) return jsonError("This note has expired or is not available on this network.", 404, "NOT_FOUND");
@@ -382,14 +495,15 @@ notesRoutes.get("/api/local/item/:itemId", async (c) => {
 notesRoutes.post("/api/local/item/:itemId/unlock", async (c) => {
   const env = c.env;
   const itemId = c.req.param("itemId");
+  const settings = await getSiteSettings(env);
   const roomId = await getRoomId(c.req.raw, env.APP_SECRET);
   const row = await env.DB.prepare(
     `SELECT n.*, ${SHARED_BY_COLUMNS} FROM notes n
      JOIN network_notes nn ON nn.note_id = n.id
      ${SHARED_BY_JOIN}
-     WHERE n.id = ? AND nn.room_id = ? AND n.expires_at > ?`,
+     WHERE n.id = ? AND nn.room_id = ? AND n.expires_at > ? AND nn.added_at > ?`,
   )
-    .bind(itemId, roomId, Date.now())
+    .bind(itemId, roomId, Date.now(), Date.now() - settings.networkVisibilityTtlSeconds * 1000)
     .first<RawNoteRow>();
   const note = rowToNote(row);
   if (!note) return jsonError("This note has expired or is not available on this network.", 404, "NOT_FOUND");
@@ -456,10 +570,35 @@ notesRoutes.delete("/api/item/:itemId", async (c) => {
   return jsonResponse({ ok: true, message: "Note deleted." });
 });
 
+notesRoutes.patch("/api/item/:itemId", async (c) => {
+  const env = c.env;
+  const itemId = c.req.param("itemId");
+  const note = await getNoteById(env, itemId);
+  if (!note) return jsonError("This note has already expired or does not exist.", 404, "NOT_FOUND");
+  const settings = await getSiteSettings(env);
+  const body = await readJsonBody<NoteEditPatch & { deleteToken?: string }>(
+    c.req.raw,
+    Math.max(24_000, settings.maxTextLength + 2_000),
+  );
+  if (!body.ok) return body.response;
+  const token = typeof body.data.deleteToken === "string" ? body.data.deleteToken : "";
+  if (!token) return jsonError("Delete token is required.", 401, "DELETE_TOKEN_REQUIRED");
+  const suppliedHash = await hmacHex(env.APP_SECRET, `delete:${token}`);
+  if (!constantTimeEqual(suppliedHash, note.deleteTokenHash)) {
+    return jsonError("You can edit this note only from the browser that created it.", 403, "INVALID_DELETE_TOKEN");
+  }
+  const requester = await getAuthenticatedUser(c.req.raw, env);
+  const limits = await getEffectiveLimits(env, requester);
+  const result = await applyNoteEdit(env, note, body.data, limits, settings);
+  if (!result.ok) return result.response;
+  await recordEvent(env, c.req.raw, "note_edited", { by: "creator" });
+  return jsonResponse({ ...publicItemPayload(result.note, true), message: "Note updated." });
+});
+
 function normalizeAccessMethodParam(url: URL): "link" | "code" | "qr" | "network" {
   const value = url.searchParams.get("via");
   return (["link", "code", "qr", "network"] as const).includes(value as never) ? (value as never) : "link";
 }
 
 // Exported for admin.ts (admin delete-by-id reuses the same lookup/delete path).
-export { getNoteById, getNoteByCode, addNoteToRoom };
+export { getNoteById, getNoteByCode, addNoteToRoom, publishNoteToRoom, applyNoteEdit, publicItemPayload };

@@ -31,6 +31,7 @@ export const DEFAULT_SETTINGS = Object.freeze({
   fileTtlSeconds: 60 * 60,
   fileUploadCooldownSeconds: 6,
   maxActiveFiles: 200,
+  networkVisibilityTtlSeconds: 6 * 60 * 60,
   allowedFileExtensions: "",
   blockedFileExtensions: "exe,bat,cmd,com,msi,scr,dll,jar,ps1,vbs,vbe,js,jse,wsf,apk",
   qrLinkToolEnabled: true,
@@ -129,6 +130,7 @@ const NUMERIC_RANGES: Record<string, [number, number]> = {
   fileTtlSeconds: [5 * 60, 7 * 24 * 60 * 60],
   fileUploadCooldownSeconds: [1, 120],
   maxActiveFiles: [10, 2_000],
+  networkVisibilityTtlSeconds: [10 * 60, 48 * 60 * 60],
 };
 
 export function sanitizeNumericSetting(key: string, value: unknown, fallback: number): number {

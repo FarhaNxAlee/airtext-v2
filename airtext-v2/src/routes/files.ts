@@ -2,7 +2,9 @@ import { Hono } from "hono";
 import type { Env } from "../types";
 import { CONFIG } from "../lib/config";
 import { getSiteSettings } from "../lib/settings";
+import type { SiteSettings } from "../lib/settings";
 import { getEffectiveLimits } from "../lib/limits";
+import type { EffectiveLimits } from "../lib/limits";
 import { jsonResponse, jsonError, readJsonBody } from "../lib/http";
 import { hmacHex, hashPin, constantTimeEqual, randomBase64Url, randomShareCode } from "../lib/crypto";
 import { normalizeTitle, normalizeShareCode, formatServerDuration, isExpired } from "../lib/util";
@@ -159,6 +161,20 @@ async function addGroupToRoom(env: Env, group: FileGroupRow, roomId: string, sou
     .run();
 }
 
+/** Owner-initiated "Share to this network" (unlike addGroupToRoom's automatic,
+ *  first-add-only INSERT OR IGNORE): refreshes added_at even if the room
+ *  already has this group, so re-sharing after the visibility window has
+ *  elapsed (see networkVisibilityTtlSeconds) actually makes it reappear. */
+async function publishGroupToRoom(env: Env, group: FileGroupRow, roomId: string, source: "mine" | "received"): Promise<void> {
+  if (!group || isExpired(group)) return;
+  await env.DB.prepare(
+    `INSERT INTO network_files (room_id, group_id, source, added_at) VALUES (?, ?, ?, ?)
+     ON CONFLICT(room_id, group_id) DO UPDATE SET added_at = excluded.added_at, source = excluded.source`,
+  )
+    .bind(roomId, group.id, source === "received" ? "received" : "mine", Date.now())
+    .run();
+}
+
 async function createUniqueFileShareCode(env: Env): Promise<string> {
   for (let attempt = 0; attempt < 10; attempt += 1) {
     const code = randomShareCode(CONFIG.SHARE_CODE_LENGTH);
@@ -241,10 +257,187 @@ async function publicGroupPayload(env: Env, group: FileGroupRow, files: FileEntr
       fileCount: files.length,
       createdAt: Number(group.createdAt),
       expiresAt: Number(group.expiresAt),
+      burnAfterRead: Boolean(group.burnAfterRead),
       ...(group.sharedBy ? { sharedBy: group.sharedBy } : {}),
       files: filePayloads,
     },
   };
+}
+
+/** Shared mutation core for all three edit-in-place tiers (anonymous
+ *  delete-token, owner, admin) -- each route only differs in how it
+ *  authorizes access to `group`, then delegates here. Mirrors POST
+ *  /api/files' validation exactly, but sizes/counts are computed relative
+ *  to the current group (existing - removed + added), not from zero.
+ *  code and delete_token_hash are never touched. */
+async function applyFileGroupEdit(
+  env: Env,
+  group: FileGroupRow,
+  existingFiles: FileEntry[],
+  form: FormData,
+  limits: EffectiveLimits,
+  settings: SiteSettings,
+): Promise<{ ok: true; group: FileGroupRow; files: FileEntry[] } | { ok: false; response: Response }> {
+  let title = group.title;
+  const titleRaw = form.get("title");
+  if (typeof titleRaw === "string" && titleRaw.trim()) {
+    const normalized = normalizeTitle(titleRaw);
+    if (normalized.length > settings.maxTitleLength) {
+      return { ok: false, response: jsonError(`Title must be ${settings.maxTitleLength} characters or fewer.`, 400, "TITLE_TOO_LONG") };
+    }
+    title = normalized;
+  }
+
+  let locked = group.locked;
+  let pinSalt = group.pinSalt;
+  let pinHash = group.pinHash;
+  const lockedRaw = form.get("locked");
+  if (lockedRaw !== null) {
+    const wantsLock = settings.pinEnabled && lockedRaw === "1";
+    if (!wantsLock) {
+      locked = false;
+      pinSalt = null;
+      pinHash = null;
+    } else {
+      const pinRaw = form.get("pin");
+      const pin = typeof pinRaw === "string" ? pinRaw.trim() : "";
+      if (pin) {
+        if (pin.length < CONFIG.MIN_PIN_LENGTH || pin.length > CONFIG.MAX_PIN_LENGTH) {
+          return {
+            ok: false,
+            response: jsonError(`PIN must be between ${CONFIG.MIN_PIN_LENGTH} and ${CONFIG.MAX_PIN_LENGTH} characters.`, 400, "INVALID_PIN_LENGTH"),
+          };
+        }
+        pinSalt = randomBase64Url(18);
+        pinHash = await hashPin(env.APP_SECRET, pinSalt, pin);
+        locked = true;
+      } else if (locked) {
+        // Already locked and no new PIN supplied -- keep the existing PIN untouched.
+        locked = true;
+      } else {
+        return {
+          ok: false,
+          response: jsonError(`PIN must be between ${CONFIG.MIN_PIN_LENGTH} and ${CONFIG.MAX_PIN_LENGTH} characters.`, 400, "INVALID_PIN_LENGTH"),
+        };
+      }
+    }
+  }
+
+  const burnRaw = form.get("burnAfterRead");
+  const burnAfterRead = burnRaw !== null ? burnRaw === "1" : group.burnAfterRead;
+
+  let expiresAt = group.expiresAt;
+  const ttlRaw = form.get("ttlSeconds");
+  if (typeof ttlRaw === "string") {
+    const requested = Number(ttlRaw);
+    if (Number.isFinite(requested) && requested > 0) {
+      expiresAt = Date.now() + Math.min(Math.floor(requested), limits.fileTtlSeconds) * 1000;
+    }
+  }
+
+  let removeIds: string[] = [];
+  const removeFileIdsRaw = form.get("removeFileIds");
+  if (typeof removeFileIdsRaw === "string" && removeFileIdsRaw.trim()) {
+    try {
+      const parsed = JSON.parse(removeFileIdsRaw);
+      if (Array.isArray(parsed)) removeIds = parsed.filter((entry): entry is string => typeof entry === "string");
+    } catch {
+      return { ok: false, response: jsonError("Invalid file removal list.", 400, "INVALID_REMOVE_FILE_IDS") };
+    }
+  }
+  const filesToRemove = existingFiles.filter((file) => removeIds.includes(file.id));
+  const remainingFiles = existingFiles.filter((file) => !removeIds.includes(file.id));
+
+  const newUploads = form.getAll("file").filter((entry): entry is File => typeof (entry as File).arrayBuffer === "function");
+
+  if (remainingFiles.length + newUploads.length < 1) {
+    return { ok: false, response: jsonError("A share must include at least one file.", 400, "LAST_FILE_REQUIRED") };
+  }
+  if (remainingFiles.length + newUploads.length > limits.maxFilesPerBatch) {
+    return { ok: false, response: jsonError(`You can attach up to ${limits.maxFilesPerBatch} files per share.`, 400, "TOO_MANY_FILES") };
+  }
+
+  const maxFileBytes = limits.maxFileSizeMB * 1024 * 1024;
+  let addedBytes = 0;
+  for (const file of newUploads) {
+    if (!file.size) return { ok: false, response: jsonError(`"${file.name}" is empty.`, 400, "FILE_EMPTY") };
+    if (file.size > maxFileBytes) {
+      return {
+        ok: false,
+        response: jsonError(`Each file must be ${limits.maxFileSizeMB}MB or smaller ("${file.name}" is too large).`, 413, "FILE_TOO_LARGE"),
+      };
+    }
+    if (!isExtensionAllowed(settings, file.name)) {
+      return { ok: false, response: jsonError(`"${file.name}" is not an allowed file type.`, 400, "FILE_TYPE_BLOCKED") };
+    }
+    addedBytes += file.size;
+  }
+  const removedBytes = filesToRemove.reduce((sum, file) => sum + file.sizeBytes, 0);
+  const resultingGroupBytes = group.totalSizeBytes - removedBytes + addedBytes;
+  if (resultingGroupBytes > limits.maxBatchTotalMB * 1024 * 1024) {
+    return { ok: false, response: jsonError(`This upload totals more than the ${limits.maxBatchTotalMB}MB batch limit.`, 413, "BATCH_TOO_LARGE") };
+  }
+  const totalStored = await getTotalFileStorageBytes(env);
+  const resultingSiteTotal = totalStored - removedBytes + addedBytes;
+  if (resultingSiteTotal > settings.maxTotalStorageMB * 1024 * 1024) {
+    return { ok: false, response: jsonError("The site-wide storage limit has been reached. Please try again later.", 507, "STORAGE_LIMIT") };
+  }
+
+  const uploaded: { id: string; r2Key: string; filename: string; mime: string; size: number }[] = [];
+  try {
+    for (const file of newUploads) {
+      const fileId = randomBase64Url(16);
+      const r2Key = `files/${group.id}/${fileId}`;
+      await env.FILES_BUCKET.put(r2Key, file.stream(), {
+        httpMetadata: { contentType: file.type || "application/octet-stream" },
+      });
+      uploaded.push({
+        id: fileId,
+        r2Key,
+        filename: String(file.name || "file").slice(0, 255),
+        mime: file.type || "application/octet-stream",
+        size: file.size,
+      });
+    }
+  } catch (error) {
+    await Promise.all(uploaded.map((entry) => env.FILES_BUCKET.delete(entry.r2Key).catch(() => {})));
+    console.error("R2 upload failed", error);
+    return { ok: false, response: jsonError("Could not store the files. Please try again.", 502, "STORAGE_WRITE_FAILED") };
+  }
+
+  const createdAt = Date.now();
+  try {
+    await env.DB.batch([
+      env.DB.prepare(
+        `UPDATE file_groups SET title = ?, locked = ?, pin_salt = ?, pin_hash = ?, burn_after_read = ?, expires_at = ?, total_size_bytes = ?
+         WHERE id = ?`,
+      ).bind(title, locked ? 1 : 0, pinSalt, pinHash, burnAfterRead ? 1 : 0, expiresAt, resultingGroupBytes, group.id),
+      ...uploaded.map((entry) =>
+        env.DB.prepare(
+          `INSERT INTO files (id, group_id, filename, mime, size_bytes, r2_key, download_count, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, 0, ?)`,
+        ).bind(entry.id, group.id, entry.filename, entry.mime, entry.size, entry.r2Key, createdAt),
+      ),
+      ...filesToRemove.map((file) => env.DB.prepare("DELETE FROM files WHERE id = ?").bind(file.id)),
+    ]);
+  } catch (error) {
+    await Promise.all(uploaded.map((entry) => env.FILES_BUCKET.delete(entry.r2Key).catch(() => {})));
+    console.error("File metadata write failed", error);
+    return { ok: false, response: jsonError("Could not save the file changes. Please try again.", 500, "DB_WRITE_FAILED") };
+  }
+
+  if (filesToRemove.length) {
+    await Promise.all(filesToRemove.map((file) => env.FILES_BUCKET.delete(file.r2Key).catch(() => {})));
+  }
+
+  const updatedGroup: FileGroupRow = { ...group, title, locked, pinSalt, pinHash, burnAfterRead, expiresAt, totalSizeBytes: resultingGroupBytes };
+  const updatedFiles: FileEntry[] = [
+    ...remainingFiles,
+    ...uploaded.map((entry) => ({
+      id: entry.id, filename: entry.filename, mime: entry.mime, sizeBytes: entry.size, r2Key: entry.r2Key, downloadCount: 0,
+    })),
+  ];
+  return { ok: true, group: updatedGroup, files: updatedFiles };
 }
 
 function normalizeAccessMethodParam(url: URL): "link" | "code" | "qr" | "network" {
@@ -258,21 +451,22 @@ filesRoutes.get("/api/local/files", async (c) => {
   const env = c.env;
   const settings = await getSiteSettings(env);
   const roomId = await getRoomId(c.req.raw, env.APP_SECRET);
+  const visibilityCutoff = Date.now() - settings.networkVisibilityTtlSeconds * 1000;
   const result = await env.DB.prepare(
-    `SELECT g.id, g.title, g.locked, g.code, g.total_size_bytes, g.created_at, g.expires_at,
+    `SELECT g.id, g.title, g.locked, g.code, g.total_size_bytes, g.created_at, g.expires_at, g.burn_after_read,
             nf.added_at, nf.source, ${SHARED_BY_COLUMNS},
             (SELECT COUNT(*) FROM files WHERE files.group_id = g.id) AS file_count
      FROM network_files nf
      JOIN file_groups g ON g.id = nf.group_id
      ${SHARED_BY_JOIN}
-     WHERE nf.room_id = ? AND g.expires_at > ?
+     WHERE nf.room_id = ? AND g.expires_at > ? AND nf.added_at > ?
      ORDER BY nf.added_at DESC
      LIMIT ?`,
   )
-    .bind(roomId, Date.now(), settings.maxActiveFiles)
+    .bind(roomId, Date.now(), visibilityCutoff, settings.maxActiveFiles)
     .all<{
       id: string; title: string; locked: number; code: string; total_size_bytes: number; created_at: number;
-      expires_at: number; added_at: number; source: string; file_count: number;
+      expires_at: number; burn_after_read: number; added_at: number; source: string; file_count: number;
       shared_by_name: string | null; shared_by_role: string | null; shared_by_rank: number | null;
     }>();
 
@@ -288,6 +482,7 @@ filesRoutes.get("/api/local/files", async (c) => {
       createdAt: Number(row.created_at || 0),
       addedAt: Number(row.added_at || row.created_at || 0),
       expiresAt: Number(row.expires_at || 0),
+      burnAfterRead: Boolean(row.burn_after_read),
       source: row.source === "received" ? "received" : "mine",
       ...(row.shared_by_name
         ? { sharedBy: { name: row.shared_by_name, role: row.shared_by_role || "", rank: Number(row.shared_by_rank) } }
@@ -490,14 +685,15 @@ filesRoutes.post("/api/files", async (c) => {
 filesRoutes.get("/api/local/file/:groupId", async (c) => {
   const env = c.env;
   const groupId = c.req.param("groupId");
+  const settings = await getSiteSettings(env);
   const roomId = await getRoomId(c.req.raw, env.APP_SECRET);
   const row = await env.DB.prepare(
     `SELECT g.*, ${SHARED_BY_COLUMNS} FROM file_groups g
      JOIN network_files nf ON nf.group_id = g.id
      ${SHARED_BY_JOIN}
-     WHERE g.id = ? AND nf.room_id = ? AND g.expires_at > ?`,
+     WHERE g.id = ? AND nf.room_id = ? AND g.expires_at > ? AND nf.added_at > ?`,
   )
-    .bind(groupId, roomId, Date.now())
+    .bind(groupId, roomId, Date.now(), Date.now() - settings.networkVisibilityTtlSeconds * 1000)
     .first<RawGroupRow>();
   const group = rowToGroup(row);
   if (!group) return jsonError("This file has expired or is not available on this network.", 404, "NOT_FOUND");
@@ -509,14 +705,15 @@ filesRoutes.get("/api/local/file/:groupId", async (c) => {
 filesRoutes.post("/api/local/file/:groupId/unlock", async (c) => {
   const env = c.env;
   const groupId = c.req.param("groupId");
+  const settings = await getSiteSettings(env);
   const roomId = await getRoomId(c.req.raw, env.APP_SECRET);
   const row = await env.DB.prepare(
     `SELECT g.*, ${SHARED_BY_COLUMNS} FROM file_groups g
      JOIN network_files nf ON nf.group_id = g.id
      ${SHARED_BY_JOIN}
-     WHERE g.id = ? AND nf.room_id = ? AND g.expires_at > ?`,
+     WHERE g.id = ? AND nf.room_id = ? AND g.expires_at > ? AND nf.added_at > ?`,
   )
-    .bind(groupId, roomId, Date.now())
+    .bind(groupId, roomId, Date.now(), Date.now() - settings.networkVisibilityTtlSeconds * 1000)
     .first<RawGroupRow>();
   const group = rowToGroup(row);
   if (!group) return jsonError("This file has expired or is not available on this network.", 404, "NOT_FOUND");
@@ -636,6 +833,33 @@ filesRoutes.delete("/api/file/:groupId", async (c) => {
   return jsonResponse({ ok: true, message: "File deleted." });
 });
 
+filesRoutes.patch("/api/file/:groupId", async (c) => {
+  const env = c.env;
+  const groupId = c.req.param("groupId");
+  const group = await getGroupById(env, groupId);
+  if (!group) return jsonError("This file has already expired or does not exist.", 404, "NOT_FOUND");
+  let form: FormData;
+  try {
+    form = await c.req.raw.formData();
+  } catch {
+    return jsonError("Could not read the request. Please try again.", 400, "INVALID_UPLOAD");
+  }
+  const token = typeof form.get("deleteToken") === "string" ? (form.get("deleteToken") as string) : "";
+  if (!token) return jsonError("Delete token is required.", 401, "DELETE_TOKEN_REQUIRED");
+  const suppliedHash = await hmacHex(env.APP_SECRET, `delete:${token}`);
+  if (!constantTimeEqual(suppliedHash, group.deleteTokenHash)) {
+    return jsonError("You can edit this file only from the browser that created it.", 403, "INVALID_DELETE_TOKEN");
+  }
+  const settings = await getSiteSettings(env);
+  const requester = await getAuthenticatedUser(c.req.raw, env);
+  const limits = await getEffectiveLimits(env, requester);
+  const existingFiles = await getFilesForGroup(env, group.id);
+  const result = await applyFileGroupEdit(env, group, existingFiles, form, limits, settings);
+  if (!result.ok) return result.response;
+  await recordEvent(env, c.req.raw, "file_edited", { by: "creator" });
+  return jsonResponse({ ...(await publicGroupPayload(env, result.group, result.files, true)), message: "File updated." });
+});
+
 async function deleteGroupAndFiles(env: Env, groupId: string): Promise<void> {
   const files = await getFilesForGroup(env, groupId);
   if (env.FILES_BUCKET && files.length) {
@@ -648,4 +872,4 @@ async function deleteGroupAndFiles(env: Env, groupId: string): Promise<void> {
 }
 
 // Exported for admin.ts (admin delete-by-id reuses the same lookup/delete path).
-export { getGroupById, getGroupByCode, deleteGroupAndFiles };
+export { getGroupById, getGroupByCode, deleteGroupAndFiles, publishGroupToRoom, applyFileGroupEdit, getFilesForGroup, publicGroupPayload };

@@ -135,6 +135,89 @@ describe("DELETE /api/item/:itemId", () => {
   });
 });
 
+describe("PATCH /api/item/:itemId", () => {
+  it("rejects an edit with the wrong delete token", async () => {
+    const { body: created } = await createNote();
+    const response = await SELF.fetch(`https://example.com/api/item/${created.item.id}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ deleteToken: "wrong-token", title: "New title" }),
+    });
+    expect(response.status).toBe(403);
+  });
+
+  it("edits title, text, PIN, burnAfterRead and ttlSeconds, leaving code and delete token unchanged", async () => {
+    const { body: created } = await createNote({ title: "Original", text: "Original text" });
+
+    const response = await SELF.fetch(`https://example.com/api/item/${created.item.id}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        deleteToken: created.deleteToken,
+        title: "Updated title",
+        text: "Updated text",
+        locked: true,
+        pin: "4321",
+        burnAfterRead: true,
+        ttlSeconds: 1200,
+      }),
+    });
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as {
+      item: { title: string; text: string; locked: boolean; burnAfterRead: boolean; code: string; expiresAt: number; createdAt: number };
+    };
+    expect(body.item.title).toBe("Updated title");
+    expect(body.item.text).toBe("Updated text");
+    expect(body.item.locked).toBe(true);
+    expect(body.item.burnAfterRead).toBe(true);
+    expect(Math.round((body.item.expiresAt - body.item.createdAt) / 1000)).toBe(1200);
+    expect(body.item.code).toBe(created.item.code);
+
+    // Code/delete token survive the edit -- same token still opens/deletes it later.
+    await new Promise((resolve) => setTimeout(resolve, 2100)); // clear unlock cooldown
+    const unlockResponse = await SELF.fetch(`https://example.com/api/share/${created.item.code}/unlock`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ pin: "4321" }),
+    });
+    expect(unlockResponse.status).toBe(200);
+  });
+
+  it("removing the PIN via locked:false clears lock state, so the share opens without a PIN afterward", async () => {
+    const { body: created } = await createNote({ locked: true, pin: "1234" });
+    const response = await SELF.fetch(`https://example.com/api/item/${created.item.id}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ deleteToken: created.deleteToken, locked: false }),
+    });
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as { item: { locked: boolean } };
+    expect(body.item.locked).toBe(false);
+
+    const shareResponse = await SELF.fetch(`https://example.com/api/share/${created.item.code}`);
+    const shareBody = (await shareResponse.json()) as { item: { text?: string } };
+    expect(shareBody.item.text).toBeTruthy();
+  });
+
+  it("keeping locked:true with no new pin leaves the existing PIN untouched", async () => {
+    const { body: created } = await createNote({ locked: true, pin: "1234" });
+    const response = await SELF.fetch(`https://example.com/api/item/${created.item.id}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ deleteToken: created.deleteToken, locked: true, title: "Still locked" }),
+    });
+    expect(response.status).toBe(200);
+
+    await new Promise((resolve) => setTimeout(resolve, 2100)); // clear unlock cooldown
+    const unlockResponse = await SELF.fetch(`https://example.com/api/share/${created.item.code}/unlock`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ pin: "1234" }),
+    });
+    expect(unlockResponse.status).toBe(200);
+  });
+});
+
 describe("burn-after-read", () => {
   it("deletes the note after its first shared open, but anonymous requests can't set custom codes", async () => {
     const { body: created } = await createNote({ burnAfterRead: true, customCode: "PICKME1" });
@@ -199,6 +282,31 @@ describe("expiry chooser (ttlSeconds override)", () => {
     expect(response.status).toBe(201);
     const actualTtl = Math.round((body.item.expiresAt - body.item.createdAt) / 1000);
     expect(actualTtl).toBe(3600);
+  });
+});
+
+describe("network visibility TTL", () => {
+  it("hides a note from the Nearby board and network-scoped fetch once its network_notes.added_at is older than networkVisibilityTtlSeconds, but its direct share link still works", async () => {
+    const { body: created } = await createNote({ title: "Aging out" });
+
+    const stillVisible = await SELF.fetch(`https://example.com/api/local/item/${created.item.id}`);
+    expect(stillVisible.status).toBe(200);
+
+    // Simulate the visibility window having elapsed (default networkVisibilityTtlSeconds is 6h).
+    const staleAddedAt = Date.now() - 7 * 60 * 60 * 1000;
+    await env.DB.prepare("UPDATE network_notes SET added_at = ? WHERE note_id = ?")
+      .bind(staleAddedAt, created.item.id)
+      .run();
+
+    const listResponse = await SELF.fetch("https://example.com/api/local/items");
+    const listBody = (await listResponse.json()) as { items: { id: string }[] };
+    expect(listBody.items.some((item) => item.id === created.item.id)).toBe(false);
+
+    const byIdResponse = await SELF.fetch(`https://example.com/api/local/item/${created.item.id}`);
+    expect(byIdResponse.status).toBe(404);
+
+    const directLink = await SELF.fetch(`https://example.com/api/share/${created.item.code}`);
+    expect(directLink.status).toBe(200);
   });
 });
 

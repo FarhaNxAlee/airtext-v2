@@ -297,3 +297,70 @@ describe("POST /api/admin/drops/bulk-delete", () => {
     expect(remainingGroup).toBeNull();
   });
 });
+
+describe("PATCH /api/admin/item/:itemId", () => {
+  it("requires the admin mutation header even with a valid session", async () => {
+    const noteId = await insertTestNote();
+    const { cookie } = await login();
+    const response = await SELF.fetch(`https://example.com/api/admin/item/${noteId}`, {
+      method: "PATCH",
+      headers: { cookie: cookie!, "content-type": "application/json" },
+      body: JSON.stringify({ title: "Admin edited" }),
+    });
+    expect(response.status).toBe(403);
+  });
+
+  it("edits any note by id, bypassing delete-token/ownership, and writes an audit log entry", async () => {
+    const noteId = await insertTestNote({ title: "Before admin edit" });
+    const { cookie } = await login();
+    const response = await SELF.fetch(`https://example.com/api/admin/item/${noteId}`, {
+      method: "PATCH",
+      headers: { cookie: cookie!, "content-type": "application/json", "x-airtext-admin": "1" },
+      body: JSON.stringify({ title: "After admin edit" }),
+    });
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as { item: { title: string } };
+    expect(body.item.title).toBe("After admin edit");
+
+    const auditResponse = await SELF.fetch("https://example.com/api/admin/audit?page=1&pageSize=5", { headers: { cookie: cookie! } });
+    const auditBody = (await auditResponse.json()) as { items: { action: string; target_id?: string }[] };
+    expect(auditBody.items.some((entry) => entry.action === "note_edited")).toBe(true);
+  });
+});
+
+describe("PATCH /api/admin/file/:fileId", () => {
+  it("requires the admin mutation header even with a valid session", async () => {
+    const fileGroupId = await insertTestFileGroup();
+    const { cookie } = await login();
+    const form = new FormData();
+    form.set("title", "Admin edited");
+    form.append("file", new File(["admin added this"], "admin.txt", { type: "text/plain" }));
+    const response = await SELF.fetch(`https://example.com/api/admin/file/${fileGroupId}`, {
+      method: "PATCH",
+      headers: { cookie: cookie! },
+      body: form,
+    });
+    expect(response.status).toBe(403);
+  });
+
+  it("edits any file group by id, bypassing delete-token/ownership, and writes an audit log entry", async () => {
+    const fileGroupId = await insertTestFileGroup({ title: "Before admin edit" });
+    const { cookie } = await login();
+    const form = new FormData();
+    form.set("title", "After admin edit");
+    form.append("file", new File(["admin added this"], "admin.txt", { type: "text/plain" }));
+    const response = await SELF.fetch(`https://example.com/api/admin/file/${fileGroupId}`, {
+      method: "PATCH",
+      headers: { cookie: cookie!, "x-airtext-admin": "1" },
+      body: form,
+    });
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as { group: { title: string; fileCount: number } };
+    expect(body.group.title).toBe("After admin edit");
+    expect(body.group.fileCount).toBe(1);
+
+    const auditResponse = await SELF.fetch("https://example.com/api/admin/audit?page=1&pageSize=5", { headers: { cookie: cookie! } });
+    const auditBody = (await auditResponse.json()) as { items: { action: string }[] };
+    expect(auditBody.items.some((entry) => entry.action === "file_edited")).toBe(true);
+  });
+});

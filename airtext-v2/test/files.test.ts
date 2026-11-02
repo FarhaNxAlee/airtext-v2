@@ -145,6 +145,78 @@ describe("DELETE /api/file/:groupId", () => {
   });
 });
 
+describe("PATCH /api/file/:groupId", () => {
+  it("rejects an edit with the wrong delete token", async () => {
+    const { body: created } = await uploadFile();
+    const form = new FormData();
+    form.set("deleteToken", "wrong-token");
+    form.set("title", "New title");
+    const response = await SELF.fetch(`https://example.com/api/file/${created.group.id}`, { method: "PATCH", body: form });
+    expect(response.status).toBe(403);
+  });
+
+  it("edits title, PIN, burnAfterRead and ttlSeconds without touching the file list", async () => {
+    const { body: created } = await uploadFile({}, "original content");
+    const form = new FormData();
+    form.set("deleteToken", created.deleteToken);
+    form.set("title", "Updated title");
+    form.set("locked", "1");
+    form.set("pin", "5678");
+    form.set("burnAfterRead", "1");
+    form.set("ttlSeconds", "1200");
+    const response = await SELF.fetch(`https://example.com/api/file/${created.group.id}`, { method: "PATCH", body: form });
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as {
+      group: { title: string; locked: boolean; burnAfterRead: boolean; fileCount: number; code: string; expiresAt: number; createdAt: number };
+    };
+    expect(body.group.title).toBe("Updated title");
+    expect(body.group.locked).toBe(true);
+    expect(body.group.burnAfterRead).toBe(true);
+    expect(body.group.fileCount).toBe(1);
+    expect(body.group.code).toBe(created.group.code);
+    expect(Math.round((body.group.expiresAt - body.group.createdAt) / 1000)).toBe(1200);
+  });
+
+  it("adds a new file to an existing group", async () => {
+    const { body: created } = await uploadFile({}, "first file");
+    const form = new FormData();
+    form.set("deleteToken", created.deleteToken);
+    form.append("file", new File(["second file"], "second.txt", { type: "text/plain" }));
+    const response = await SELF.fetch(`https://example.com/api/file/${created.group.id}`, { method: "PATCH", body: form });
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as { group: { fileCount: number } };
+    expect(body.group.fileCount).toBe(2);
+  });
+
+  it("removes a file from a multi-file group", async () => {
+    const { body: created } = await uploadFiles([
+      { name: "a.txt", content: "A" },
+      { name: "b.txt", content: "B" },
+    ]);
+    const removeId = created.group.files[0].id;
+    const form = new FormData();
+    form.set("deleteToken", created.deleteToken);
+    form.set("removeFileIds", JSON.stringify([removeId]));
+    const response = await SELF.fetch(`https://example.com/api/file/${created.group.id}`, { method: "PATCH", body: form });
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as { group: { fileCount: number; files: { id: string }[] } };
+    expect(body.group.fileCount).toBe(1);
+    expect(body.group.files.some((file) => file.id === removeId)).toBe(false);
+  });
+
+  it("rejects removing the only remaining file in a single-file group", async () => {
+    const { body: created } = await uploadFile();
+    const removeId = created.group.files[0].id;
+    const form = new FormData();
+    form.set("deleteToken", created.deleteToken);
+    form.set("removeFileIds", JSON.stringify([removeId]));
+    const response = await SELF.fetch(`https://example.com/api/file/${created.group.id}`, { method: "PATCH", body: form });
+    expect(response.status).toBe(400);
+    const body = (await response.json()) as { code: string };
+    expect(body.code).toBe("LAST_FILE_REQUIRED");
+  });
+});
+
 describe("burn-after-read (files)", () => {
   it("deletes the whole batch after the first file download, not at open-time", async () => {
     const { body: created } = await uploadFiles(
@@ -181,6 +253,31 @@ describe("vanity share codes (files)", () => {
     expect(anonResponse.status).toBe(201);
     expect(anon.group.code).not.toBe("SHOULDNOTAPPLY");
   }, 10_000);
+});
+
+describe("network visibility TTL (files)", () => {
+  it("hides a file group from the Nearby board and network-scoped fetch once its network_files.added_at is older than networkVisibilityTtlSeconds, but its direct share link still works", async () => {
+    const { body: created } = await uploadFile({ title: "Aging out" });
+
+    const stillVisible = await SELF.fetch(`https://example.com/api/local/file/${created.group.id}`);
+    expect(stillVisible.status).toBe(200);
+
+    // Simulate the visibility window having elapsed (default networkVisibilityTtlSeconds is 6h).
+    const staleAddedAt = Date.now() - 7 * 60 * 60 * 1000;
+    await env.DB.prepare("UPDATE network_files SET added_at = ? WHERE group_id = ?")
+      .bind(staleAddedAt, created.group.id)
+      .run();
+
+    const listResponse = await SELF.fetch("https://example.com/api/local/files");
+    const listBody = (await listResponse.json()) as { files: { id: string }[] };
+    expect(listBody.files.some((file) => file.id === created.group.id)).toBe(false);
+
+    const byIdResponse = await SELF.fetch(`https://example.com/api/local/file/${created.group.id}`);
+    expect(byIdResponse.status).toBe(404);
+
+    const directLink = await SELF.fetch(`https://example.com/api/share/file/${created.group.code}`);
+    expect(directLink.status).toBe(200);
+  });
 });
 
 describe("expiry chooser (ttlSeconds override, files)", () => {

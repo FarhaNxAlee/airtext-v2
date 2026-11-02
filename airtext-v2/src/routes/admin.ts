@@ -2,14 +2,16 @@ import { Hono } from "hono";
 import type { Env } from "../types";
 import { CONFIG } from "../lib/config";
 import { getSiteSettings, sanitizeSettings, setSiteSettingsCache } from "../lib/settings";
+import { getEffectiveLimits } from "../lib/limits";
 import { jsonResponse, jsonError, readJsonBody } from "../lib/http";
 import { hashPassword, constantTimeEqual } from "../lib/crypto";
-import { getClientIpHash, requireAdmin, getSession, createSessionToken, buildSessionCookie } from "../middleware/auth";
+import { getClientIpHash, requireAdmin, getSession, getAuthenticatedUser, createSessionToken, buildSessionCookie } from "../middleware/auth";
 import { enforceCooldown } from "../middleware/rateLimit";
 import { recordEvent } from "../lib/analytics";
 import { recordAudit } from "../lib/audit";
-import { getNoteById } from "./notes";
-import { getGroupById, deleteGroupAndFiles } from "./files";
+import type { NoteEditPatch } from "./notes";
+import { getNoteById, applyNoteEdit, publicItemPayload } from "./notes";
+import { getGroupById, deleteGroupAndFiles, applyFileGroupEdit, getFilesForGroup, publicGroupPayload } from "./files";
 
 /** Ported from airtext-worker-modern.js:793-797, 830-836, 2328-2516; login/session
  *  now check the `users` table (role rank 0) instead of the ADMIN_PASSWORD secret --
@@ -243,6 +245,37 @@ adminRoutes.patch("/api/admin/settings", async (c) => {
   return jsonResponse({ ok: true, settings, message: "Settings saved." });
 });
 
+adminRoutes.patch("/api/admin/item/:itemId", async (c) => {
+  const env = c.env;
+  const authError = await requireAdmin(c.req.raw, env, true);
+  if (authError) return authError;
+  const note = await getNoteById(env, c.req.param("itemId"));
+  if (!note) return jsonError("The note has expired or does not exist.", 404, "NOT_FOUND");
+  const settings = await getSiteSettings(env);
+  const requester = await getAuthenticatedUser(c.req.raw, env);
+  const limits = await getEffectiveLimits(env, requester);
+  const body = await readJsonBody<NoteEditPatch>(c.req.raw, Math.max(24_000, limits.maxTextLength + 2_000));
+  if (!body.ok) return body.response;
+  const before = { title: note.title, text: note.text, locked: note.locked, burnAfterRead: note.burnAfterRead, expiresAt: note.expiresAt };
+  const result = await applyNoteEdit(env, note, body.data, limits, settings);
+  if (!result.ok) return result.response;
+  await recordEvent(env, c.req.raw, "note_edited", { by: "admin" });
+  const session = await getSession(c.req.raw, env);
+  await recordAudit(env, {
+    actorUserId: session?.sub ?? null,
+    action: "note_edited",
+    targetType: "note",
+    targetId: note.id,
+    before,
+    after: {
+      title: result.note.title, text: result.note.text, locked: result.note.locked,
+      burnAfterRead: result.note.burnAfterRead, expiresAt: result.note.expiresAt,
+    },
+    ipHash: await getClientIpHash(c.req.raw, env.APP_SECRET),
+  });
+  return jsonResponse({ ...publicItemPayload(result.note, true), message: "Note updated." });
+});
+
 adminRoutes.delete("/api/admin/item/:itemId", async (c) => {
   const env = c.env;
   const authError = await requireAdmin(c.req.raw, env, true);
@@ -261,6 +294,42 @@ adminRoutes.delete("/api/admin/item/:itemId", async (c) => {
     ipHash: await getClientIpHash(c.req.raw, env.APP_SECRET),
   });
   return jsonResponse({ ok: true, message: "Note deleted." });
+});
+
+adminRoutes.patch("/api/admin/file/:fileId", async (c) => {
+  const env = c.env;
+  const authError = await requireAdmin(c.req.raw, env, true);
+  if (authError) return authError;
+  const group = await getGroupById(env, c.req.param("fileId"));
+  if (!group) return jsonError("The file has expired or does not exist.", 404, "NOT_FOUND");
+  let form: FormData;
+  try {
+    form = await c.req.raw.formData();
+  } catch {
+    return jsonError("Could not read the request. Please try again.", 400, "INVALID_UPLOAD");
+  }
+  const settings = await getSiteSettings(env);
+  const requester = await getAuthenticatedUser(c.req.raw, env);
+  const limits = await getEffectiveLimits(env, requester);
+  const existingFiles = await getFilesForGroup(env, group.id);
+  const before = { title: group.title, locked: group.locked, burnAfterRead: group.burnAfterRead, expiresAt: group.expiresAt, totalSizeBytes: group.totalSizeBytes };
+  const result = await applyFileGroupEdit(env, group, existingFiles, form, limits, settings);
+  if (!result.ok) return result.response;
+  await recordEvent(env, c.req.raw, "file_edited", { by: "admin" });
+  const session = await getSession(c.req.raw, env);
+  await recordAudit(env, {
+    actorUserId: session?.sub ?? null,
+    action: "file_edited",
+    targetType: "file",
+    targetId: group.id,
+    before,
+    after: {
+      title: result.group.title, locked: result.group.locked, burnAfterRead: result.group.burnAfterRead,
+      expiresAt: result.group.expiresAt, totalSizeBytes: result.group.totalSizeBytes,
+    },
+    ipHash: await getClientIpHash(c.req.raw, env.APP_SECRET),
+  });
+  return jsonResponse({ ...(await publicGroupPayload(env, result.group, result.files, true)), message: "File updated." });
 });
 
 adminRoutes.delete("/api/admin/file/:fileId", async (c) => {

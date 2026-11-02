@@ -278,6 +278,9 @@ const SHARED_MODALS = String.raw`<div id="maintenance-modal" class="maintenance-
             <button type="button" data-action="show-current-qr" class="flex-1 rounded-md border border-white/10 px-4 py-3 text-sm text-neutral-300 transition hover:border-violet-500/60 hover:bg-violet-500/10 hover:text-white">
               Code & QR
             </button>
+            <button id="edit-item-button" type="button" data-action="open-edit-item-modal" class="hidden flex-1 items-center justify-center rounded-md border border-white/10 px-4 py-3 text-sm text-neutral-300 transition hover:bg-white/5 hover:text-white">
+              Edit
+            </button>
             <button id="delete-item-button" type="button" data-action="delete-current-item" class="hidden flex-1 items-center justify-center rounded-md border border-red-500/20 px-4 py-3 text-sm text-red-300 transition hover:bg-red-500/10">
               Delete
             </button>
@@ -327,10 +330,113 @@ const SHARED_MODALS = String.raw`<div id="maintenance-modal" class="maintenance-
           <div id="file-modal-list" class="grid gap-2"></div>
           <div class="mt-4 flex flex-col gap-2 sm:flex-row">
             <button type="button" data-action="show-current-file-qr" class="flex-1 rounded-md border border-white/10 px-4 py-3 text-sm text-neutral-300 transition hover:border-violet-500/60 hover:bg-violet-500/10 hover:text-white">Code & QR</button>
+            <button id="edit-file-button" type="button" data-action="open-edit-file-modal" class="hidden flex-1 items-center justify-center rounded-md border border-white/10 px-4 py-3 text-sm text-neutral-300 transition hover:bg-white/5 hover:text-white">Edit</button>
             <button id="delete-file-button" type="button" data-action="delete-current-file" class="hidden flex-1 items-center justify-center rounded-md border border-red-500/20 px-4 py-3 text-sm text-red-300 transition hover:bg-red-500/10">Delete</button>
           </div>
         </div>
       </div>
+    </div>
+  </div>
+
+  <!-- Edit note modal -->
+  <div id="edit-item-modal" class="fixed inset-0 z-50 hidden items-end justify-center bg-[#02040a]/80 p-0 backdrop-blur-sm sm:items-center sm:p-5" aria-hidden="true">
+    <div class="glass-panel slide-up max-h-[92vh] w-full max-w-2xl overflow-hidden shadow-2xl sm:rounded-2xl">
+      <div class="flex items-start justify-between gap-4 border-b border-white/5 px-5 py-4 sm:px-6">
+        <h2 class="text-xl font-semibold text-white">Edit share</h2>
+        <button type="button" data-action="close-edit-item-modal" class="grid h-9 w-9 shrink-0 place-items-center rounded-lg text-slate-500 transition hover:bg-white/[.06] hover:text-white" aria-label="Close">
+          <svg viewBox="0 0 24 24" class="h-5 w-5"><use href="#i-close"></use></svg>
+        </button>
+      </div>
+      <form id="edit-item-form" class="scrollbar-thin max-h-[calc(92vh-80px)] overflow-y-auto p-5 sm:p-6" novalidate>
+        <div id="edit-item-error" class="hidden mb-4 border border-red-500/20 bg-red-500/5 p-4 text-sm text-red-300"></div>
+        <label for="edit-item-title" class="sr-only">Title</label>
+        <input id="edit-item-title" type="text" maxlength="__MAX_TITLE_LENGTH__" placeholder="Title" class="w-full rounded-lg border border-white/10 bg-black/25 px-3 py-2.5 text-sm text-white outline-none placeholder:text-slate-600 focus:border-cyan-400/50">
+        <label for="edit-item-text" class="sr-only">Text</label>
+        <textarea id="edit-item-text" rows="8" maxlength="__MAX_TEXT_LENGTH__" placeholder="Leave blank to keep the current text" class="scrollbar-thin mt-3 w-full resize-y rounded-lg border border-white/10 bg-black/25 p-3 text-sm text-slate-200 outline-none placeholder:text-slate-600 focus:border-cyan-400/50"></textarea>
+        <div class="mt-4 flex flex-wrap items-center gap-3">
+          <label class="inline-flex cursor-pointer items-center gap-2 text-sm text-neutral-400">
+            <input id="edit-item-lock-toggle" type="checkbox" class="peer sr-only">
+            <span class="relative h-5 w-9 rounded-full bg-slate-700 transition peer-checked:bg-[var(--accent)] after:absolute after:left-0.5 after:top-0.5 after:h-4 after:w-4 after:rounded-full after:bg-white after:shadow after:transition peer-checked:after:translate-x-4"></span>
+            <span>Lock with PIN</span>
+          </label>
+          <div id="edit-item-pin-field-wrap" class="hidden">
+            <label for="edit-item-pin" class="sr-only">New PIN</label>
+            <input id="edit-item-pin" type="password" minlength="__MIN_PIN_LENGTH__" maxlength="__MAX_PIN_LENGTH__" autocomplete="new-password" placeholder="Leave blank to keep current PIN" class="w-56 rounded-lg border border-white/10 bg-black/25 px-3 py-2 text-sm text-white outline-none placeholder:text-slate-600 focus:border-cyan-400/50">
+          </div>
+          <label class="inline-flex cursor-pointer items-center gap-2 text-sm text-neutral-400">
+            <input id="edit-item-burn-toggle" type="checkbox" class="peer sr-only">
+            <span class="relative h-5 w-9 rounded-full bg-slate-700 transition peer-checked:bg-[var(--accent)] after:absolute after:left-0.5 after:top-0.5 after:h-4 after:w-4 after:rounded-full after:bg-white after:shadow after:transition peer-checked:after:translate-x-4"></span>
+            <span>Open once</span>
+          </label>
+          <label for="edit-item-ttl-select" class="sr-only">Expiry</label>
+          <select id="edit-item-ttl-select" class="w-auto rounded-lg border border-white/10 bg-black/25 px-3 py-2 text-sm text-slate-300 outline-none focus:border-cyan-400/50">
+            <option value="">Keep current expiry</option>
+            <option value="600">10 minutes from now</option>
+            <option value="3600">1 hour from now</option>
+            <option value="86400">1 day from now</option>
+            <option value="259200">3 days from now</option>
+            <option value="604800">7 days from now</option>
+            <option value="2592000">30 days from now</option>
+          </select>
+        </div>
+        <div class="mt-5 flex flex-col gap-2 sm:flex-row">
+          <button type="submit" id="edit-item-submit" class="primary-action flex-1 px-5 py-3 text-sm font-semibold">Save changes</button>
+          <button type="button" data-action="close-edit-item-modal" class="flex-1 rounded-md border border-white/10 px-5 py-3 text-sm text-neutral-300 transition hover:bg-white/5 hover:text-white">Cancel</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Edit file modal -->
+  <div id="edit-file-modal" class="fixed inset-0 z-50 hidden items-end justify-center bg-[#02040a]/80 p-0 backdrop-blur-sm sm:items-center sm:p-5" aria-hidden="true">
+    <div class="glass-panel slide-up max-h-[92vh] w-full max-w-lg overflow-hidden shadow-2xl sm:rounded-2xl">
+      <div class="flex items-start justify-between gap-4 border-b border-white/5 px-5 py-4 sm:px-6">
+        <h2 class="text-xl font-semibold text-white">Edit files</h2>
+        <button type="button" data-action="close-edit-file-modal" class="grid h-9 w-9 shrink-0 place-items-center rounded-lg text-slate-500 transition hover:bg-white/[.06] hover:text-white" aria-label="Close">
+          <svg viewBox="0 0 24 24" class="h-5 w-5"><use href="#i-close"></use></svg>
+        </button>
+      </div>
+      <form id="edit-file-form" class="scrollbar-thin max-h-[calc(92vh-80px)] overflow-y-auto p-5 sm:p-6" novalidate>
+        <div id="edit-file-error" class="hidden mb-4 border border-red-500/20 bg-red-500/5 p-4 text-sm text-red-300"></div>
+        <label for="edit-file-title" class="sr-only">Title</label>
+        <input id="edit-file-title" type="text" maxlength="80" placeholder="Title" class="w-full rounded-lg border border-white/10 bg-black/25 px-3 py-2.5 text-sm text-white outline-none placeholder:text-slate-600 focus:border-cyan-400/50">
+        <div id="edit-file-existing-list" class="mt-3 grid gap-1 text-xs text-slate-400"></div>
+        <label id="edit-file-add-zone" for="edit-file-input" class="mt-3 flex cursor-pointer items-center justify-center gap-2 rounded-xl border-2 border-dashed border-white/15 px-4 py-6 text-center text-xs text-slate-500 transition hover:border-cyan-400/40">
+          <span>Add more files</span>
+          <input id="edit-file-input" type="file" multiple class="sr-only">
+        </label>
+        <div id="edit-file-staged-list" class="mt-2 hidden grid gap-1 text-xs text-slate-400"></div>
+        <div class="mt-4 flex flex-wrap items-center gap-3">
+          <label class="inline-flex cursor-pointer items-center gap-2 text-sm text-neutral-400">
+            <input id="edit-file-lock-toggle" type="checkbox" class="peer sr-only">
+            <span class="relative h-5 w-9 rounded-full bg-slate-700 transition peer-checked:bg-[var(--accent)] after:absolute after:left-0.5 after:top-0.5 after:h-4 after:w-4 after:rounded-full after:bg-white after:shadow after:transition peer-checked:after:translate-x-4"></span>
+            <span>Lock with PIN</span>
+          </label>
+          <div id="edit-file-pin-field-wrap" class="hidden">
+            <label for="edit-file-pin" class="sr-only">New PIN</label>
+            <input id="edit-file-pin" type="password" minlength="__MIN_PIN_LENGTH__" maxlength="__MAX_PIN_LENGTH__" autocomplete="new-password" placeholder="Leave blank to keep current PIN" class="w-56 rounded-lg border border-white/10 bg-black/25 px-3 py-2 text-sm text-white outline-none placeholder:text-slate-600 focus:border-cyan-400/50">
+          </div>
+          <label class="inline-flex cursor-pointer items-center gap-2 text-sm text-neutral-400">
+            <input id="edit-file-burn-toggle" type="checkbox" class="peer sr-only">
+            <span class="relative h-5 w-9 rounded-full bg-slate-700 transition peer-checked:bg-[var(--accent)] after:absolute after:left-0.5 after:top-0.5 after:h-4 after:w-4 after:rounded-full after:bg-white after:shadow after:transition peer-checked:after:translate-x-4"></span>
+            <span>Open once</span>
+          </label>
+          <label for="edit-file-ttl-select" class="sr-only">Expiry</label>
+          <select id="edit-file-ttl-select" class="w-auto rounded-lg border border-white/10 bg-black/25 px-3 py-2 text-sm text-slate-300 outline-none focus:border-cyan-400/50">
+            <option value="">Keep current expiry</option>
+            <option value="600">10 minutes from now</option>
+            <option value="3600">1 hour from now</option>
+            <option value="86400">1 day from now</option>
+            <option value="259200">3 days from now</option>
+            <option value="604800">7 days from now</option>
+            <option value="2592000">30 days from now</option>
+          </select>
+        </div>
+        <div class="mt-5 flex flex-col gap-2 sm:flex-row">
+          <button type="submit" id="edit-file-submit" class="primary-action flex-1 px-5 py-3 text-sm font-semibold">Save changes</button>
+          <button type="button" data-action="close-edit-file-modal" class="flex-1 rounded-md border border-white/10 px-5 py-3 text-sm text-neutral-300 transition hover:bg-white/5 hover:text-white">Cancel</button>
+        </div>
+      </form>
     </div>
   </div>
 
@@ -976,6 +1082,9 @@ function createCardFragment(tabPanel?: string): string {
                 <option value="600">Disappears in 10 minutes</option>
                 <option value="3600">Disappears in 1 hour</option>
                 <option value="86400">Disappears in 1 day</option>
+                <option value="259200">Disappears in 3 days</option>
+                <option value="604800">Disappears in 7 days</option>
+                <option value="2592000">Disappears in 30 days</option>
               </select>
             </div>
 
@@ -1111,6 +1220,9 @@ function filesUploadFragmentInner(): string {
               <option value="600">Disappears in 10 minutes</option>
               <option value="3600">Disappears in 1 hour</option>
               <option value="86400">Disappears in 1 day</option>
+              <option value="259200">Disappears in 3 days</option>
+              <option value="604800">Disappears in 7 days</option>
+              <option value="2592000">Disappears in 30 days</option>
             </select>
           </div>
           <button id="file-upload-submit" type="submit" class="primary-action inline-flex min-w-40 items-center justify-center gap-2 px-6 py-3 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-50">
