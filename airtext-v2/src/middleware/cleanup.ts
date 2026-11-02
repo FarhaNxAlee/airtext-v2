@@ -29,18 +29,16 @@ export async function cleanupD1(env: Env, now = Date.now()): Promise<void> {
 
 export async function purgeExpiredFiles(env: Env, now: number): Promise<void> {
   // Bounded batches keep the scheduled handler responsive under backlog.
-  for (let batch = 0; batch < 5; batch++) {
-    const groups = await env.DB.prepare("SELECT id FROM file_groups WHERE expires_at <= ? LIMIT 100").bind(now).all<{id:string}>();
-    const ids = (groups.results || []).map((row) => row.id);
-    if (!ids.length) break;
-    const placeholders = ids.map(() => "?").join(",");
-    const files = await env.DB.prepare(`SELECT r2_key FROM files WHERE group_id IN (${placeholders})`).bind(...ids).all<{r2_key:string}>();
-    const keys = (files.results || []).map((row) => row.r2_key);
-    await env.DB.batch([
-      ...keys.map((key) => env.DB.prepare("INSERT OR IGNORE INTO object_deletions (r2_key,created_at) VALUES (?,?)").bind(key,now)),
-      env.DB.prepare(`DELETE FROM files WHERE group_id IN (${placeholders})`).bind(...ids),
-      env.DB.prepare(`DELETE FROM file_groups WHERE id IN (${placeholders})`).bind(...ids),
-    ]);
-    await deleteObjectsReliably(env, keys);
-  }
+  const groups = await env.DB.prepare("SELECT id FROM file_groups WHERE expires_at <= ? LIMIT 20").bind(now).all<{id:string}>();
+  const ids = (groups.results || []).map((row) => row.id);
+  if (!ids.length) return;
+  const placeholders = ids.map(() => "?").join(",");
+  const files = await env.DB.prepare(`SELECT r2_key FROM files WHERE group_id IN (${placeholders})`).bind(...ids).all<{r2_key:string}>();
+  const keys = (files.results || []).map((row) => row.r2_key);
+  await env.DB.batch([
+    env.DB.prepare(`INSERT OR IGNORE INTO object_deletions (r2_key,created_at) SELECT r2_key,? FROM files WHERE group_id IN (${placeholders})`).bind(now,...ids),
+    env.DB.prepare(`DELETE FROM files WHERE group_id IN (${placeholders})`).bind(...ids),
+    env.DB.prepare(`DELETE FROM file_groups WHERE id IN (${placeholders})`).bind(...ids),
+  ]);
+  await deleteObjectsReliably(env, keys);
 }

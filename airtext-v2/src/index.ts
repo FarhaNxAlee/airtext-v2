@@ -8,7 +8,7 @@ import { adminRoutes } from "./routes/admin";
 import { usersRoutes } from "./routes/users";
 import { meRoutes } from "./routes/me";
 import { seoRoutes } from "./routes/seo";
-import { jsonError } from "./lib/http";
+import { jsonError, jsonResponse } from "./lib/http";
 import { getSiteSettings } from "./lib/settings";
 import { getEffectiveLimits } from "./lib/limits";
 import { getAuthenticatedUser } from "./middleware/auth";
@@ -121,6 +121,11 @@ app.use("*", async (c, next) => {
   await next();
 });
 
+app.get("/api/health", async (c) => {
+  await c.env.DB.prepare("SELECT 1 AS healthy").first();
+  return jsonResponse({ ok: true, version: "3.1.0", build: c.env.BUILD_SHA, deployment: c.env.CF_VERSION_METADATA?.id || "local", environment: c.env.ENVIRONMENT, storage: { database: true, files: Boolean(c.env.FILES_BUCKET) } });
+});
+
 app.get("/favicon.ico", (c) => c.body(null, 204));
 
 app.route("/", seoRoutes);
@@ -134,6 +139,7 @@ app.route("/", meRoutes);
 app.get("*", async (c) => {
   const url = new URL(c.req.url);
   const path = normalizePath(url.pathname);
+  if (path.startsWith("/api/")) return jsonError("API route not found.", 404, "NOT_FOUND");
 
   const codeMatch = path.match(/^\/s\/([A-Za-z0-9]{4,12})$/);
   const fileCodeMatch = path.match(/^\/f\/([A-Za-z0-9]{4,12})$/);

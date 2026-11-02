@@ -1,5 +1,7 @@
 import "./style.css";
 import { COPY } from "./copy.js";
+import { encryptText, decryptItem, keyForCode, storeKey, rememberLinkKey, withKey } from "./encryption.js";
+import { rememberDrop, recentDrops, forgetDrop, renderRecentDrops, renderNearbyBoard, addSmartTools, addFileTools, uploadRequest } from "./features.js";
 
 (function () {
       "use strict";
@@ -35,9 +37,18 @@ import { COPY } from "./copy.js";
       document.addEventListener("DOMContentLoaded", init);
 
       function init() {
+        rememberLinkKey(window.location.href);
         cacheElements();
         bindEvents();
         syncThemeButtons();
+        // Shared shell behavior runs once on every route.
+        applyPublicSettings();
+        highlightActiveNav();
+        updateAccountLinkLabel();
+        syncWebShareButtonVisibility();
+        window.setInterval(updateCountdowns, 1000);
+        updateCountdowns();
+        initDropFeatures();
 
         if (APP.initialAdmin) {
           el.publicApp.classList.add("hidden-force");
@@ -54,15 +65,11 @@ import { COPY } from "./copy.js";
           return;
         }
 
-        applyPublicSettings();
-        updateAccountLinkLabel();
         switchTab("share");
         updateCounters();
         loadLocalItems(false);
         loadLocalFiles(false);
         startPolling();
-        window.setInterval(updateCountdowns, 1000);
-        updateCountdowns();
         populateExpiryChoosers();
         startWifiLiveCount();
         bindPasteAnywhere();
@@ -357,9 +364,7 @@ import { COPY } from "./copy.js";
         if (el.joinForm) {
           el.joinForm.addEventListener("submit", function (event) {
             event.preventDefault();
-            var code = normalizeCode(el.joinCode.value);
-            if (!code) return toast("Enter a valid share code.", "error");
-            openAnyShareByCode(code, true, "code");
+            receiveValue(el.joinCode.value);
           });
         }
         if (el.unlockForm) el.unlockForm.addEventListener("submit", unlockCurrentItem);
@@ -525,10 +530,14 @@ import { COPY } from "./copy.js";
         }
         if (el.joinCode) {
           el.joinCode.addEventListener("input", function () {
-            el.joinCode.value = normalizeCode(el.joinCode.value);
+            if (!/https?:\/\//i.test(el.joinCode.value)) el.joinCode.value = normalizeCode(el.joinCode.value);
           });
         }
 
+        if (el.joinCode) el.joinCode.addEventListener("paste", function (event) {
+          var text = event.clipboardData && event.clipboardData.getData("text");
+          if (text && /^https?:\/\//i.test(text.trim())) { event.preventDefault(); receiveValue(text); }
+        });
         // Nav dropdowns (Send / Nearby-Receive / Tools / Help / avatar) are
         // plain <details> elements -- close any others when one opens, and
         // close them all when clicking outside, so only one is open at a time.
@@ -555,7 +564,7 @@ import { COPY } from "./copy.js";
           if (action === "focus-join") focusSection("join-card", "join-code");
           if (action === "focus-notes") focusSection("notes-section", "notes-search");
           if (action === "focus-files") focusSection("files-card", "file-title");
-          if (action === "refresh-items") loadLocalItems(true);
+          if (action === "refresh-items") { loadLocalItems(true); loadLocalFiles(false); }
           if (action === "refresh-files") loadLocalFiles(true);
           if (action === "open-scanner") {
             if (el.drawer.classList.contains("open")) closeDrawer();
@@ -690,6 +699,8 @@ import { COPY } from "./copy.js";
           if (event.key !== "Escape") return;
           if (!el.scannerModal.classList.contains("hidden")) closeScanner();
           else if (!el.qrModal.classList.contains("hidden")) closeQrModal();
+          else if (!el.editItemModal.classList.contains("hidden")) closeEditItemModal();
+          else if (!el.editFileModal.classList.contains("hidden")) closeEditFileModal();
           else if (!el.fileModal.classList.contains("hidden")) closeFileModal();
           else if (!el.itemModal.classList.contains("hidden")) closeItemModal();
           else if (el.drawer.classList.contains("open")) closeDrawer();
@@ -707,6 +718,7 @@ import { COPY } from "./copy.js";
         var locked = APP.pinEnabled && el.lockToggle.checked;
         var pin = el.sharePin.value.trim();
         var burnAfterRead = el.burnToggle.checked;
+        var wantsEncryption = APP.allowClientEncryption && document.getElementById("encrypt-note-toggle") && document.getElementById("encrypt-note-toggle").checked;
         var customCode = APP.allowCustomCode ? el.customCodeInput.value.trim() : "";
         var ttlSeconds = el.createTtlSelect && el.createTtlSelect.value ? Number(el.createTtlSelect.value) : undefined;
 
@@ -719,17 +731,22 @@ import { COPY } from "./copy.js";
         setButtonLoading(el.createSubmit, true, "Creating share…");
 
         try {
+          var envelope = wantsEncryption ? await encryptText(text) : null;
           var response = await apiFetch("/api/items", {
             method: "POST",
             headers: { "content-type": "application/json" },
             body: JSON.stringify({
-              title: title, text: text, locked: locked, pin: pin,
+              title: title, text: envelope ? envelope.text : text, locked: locked, pin: pin,
+              encrypted: Boolean(envelope), encryptionIv: envelope && envelope.encryptionIv, encryptionVersion: envelope && envelope.encryptionVersion,
               burnAfterRead: burnAfterRead, customCode: customCode, ttlSeconds: ttlSeconds
             })
           });
 
           saveDeleteToken(response.item.id, response.deleteToken);
-          upsertLocalItem(response.item, true);
+          if (envelope) storeKey(response.item.code, envelope.key);
+          rememberDrop("note", response.item);
+          refreshRecentDrops();
+          if (!response.item.burnAfterRead && !response.item.encrypted) upsertLocalItem(response.item, true);
           renderLocalItems();
           if (el.lastRefreshed) el.lastRefreshed.textContent = "Added just now";
           resetCreateForm();
@@ -765,6 +782,7 @@ import { COPY } from "./copy.js";
       }
 
       function renderLocalItems() {
+        renderNearby();
         if (!el.boardList) return;
         var now = Date.now();
         state.items = state.items.filter(function (item) { return Number(item.expiresAt) > now; });
@@ -774,7 +792,7 @@ import { COPY } from "./copy.js";
           var matchesText = !query || String(item.title || "").toLowerCase().indexOf(query) !== -1 ||
             String(item.code || "").toLowerCase().indexOf(query) !== -1;
           var matchesFilter = filter === "all" ||
-            (filter === "mine" && item.source === "mine") ||
+            (filter === "mine" && (item.isOwner || getDeleteToken(item.id))) ||
             (filter === "received" && item.source === "received") ||
             (filter === "open" && !item.locked) ||
             (filter === "locked" && item.locked);
@@ -808,7 +826,7 @@ import { COPY } from "./copy.js";
           meta.className = "note-meta";
           var sourceBadge = document.createElement("span");
           sourceBadge.className = "note-badge " + (item.source === "received" ? "badge-received" : "badge-mine");
-          sourceBadge.textContent = item.source === "received" ? "Received" : "Mine";
+          sourceBadge.textContent = item.isOwner || getDeleteToken(item.id) || getDeleteToken("file:" + item.id) ? "Mine" : "Nearby";
           var lockBadge = document.createElement("span");
           lockBadge.className = "note-badge" + (item.locked ? " badge-locked" : "");
           lockBadge.textContent = item.locked ? "PIN locked" : "Open";
@@ -887,7 +905,7 @@ import { COPY } from "./copy.js";
           el.joinCode.value = code;
           openItemModal();
           if (updateUrl && window.location.pathname !== "/s/" + code) {
-            window.history.pushState({}, "", "/s/" + code);
+            window.history.pushState({}, "", withKey(window.location.origin + "/s/" + code));
           }
           showItemResponse(probe.item, "share", code);
         } catch (error) {
@@ -914,7 +932,7 @@ import { COPY } from "./copy.js";
         openItemModal();
 
         if (updateUrl && window.location.pathname !== "/s/" + code) {
-          window.history.pushState({}, "", "/s/" + code);
+          window.history.pushState({}, "", withKey(window.location.origin + "/s/" + code));
         }
 
         try {
@@ -925,7 +943,17 @@ import { COPY } from "./copy.js";
         }
       }
 
-      function showItemResponse(item, source, code) {
+      async function showItemResponse(item, source, code) {
+        if (item.encrypted) {
+          try {
+            ensureEncryptionKey(item.code);
+            if (typeof item.text !== "string" && !item.locked) {
+              var ready = await apiFetch("/api/share/" + encodeURIComponent(item.code) + "?via=link");
+              item = ready.item;
+            }
+            item = await decryptItem(item, code || item.code);
+          } catch (error) { showModalError(error.message); return; }
+        }
         state.currentItem = item;
         state.currentSource = source;
         state.currentCode = code || item.code;
@@ -936,6 +964,7 @@ import { COPY } from "./copy.js";
         el.modalExpiry.setAttribute("data-expires", String(item.expiresAt));
         el.modalExpiry.textContent = formatRemaining(item.expiresAt);
         setLockBadge(item.locked);
+        if (item.encrypted) el.modalLockBadge.textContent = "Browser encrypted";
 
         if (typeof item.text === "string") {
           el.unlockForm.classList.add("hidden");
@@ -947,8 +976,9 @@ import { COPY } from "./copy.js";
             el.modalSharedBy.classList.add("hidden");
           }
           renderLinkedText(el.modalText, item.text);
+          addSmartTools(el.modalText, item.text, copyText, toast);
           updateDeleteButton(item.id);
-          if (source === "share") {
+          if (source === "share" && !item.burnAfterRead && !item.encrypted) {
             upsertLocalItem(Object.assign({}, item, {
               source: getDeleteToken(item.id) ? "mine" : "received",
               addedAt: Date.now()
@@ -1064,10 +1094,10 @@ import { COPY } from "./copy.js";
           el.modalLockBadge.classList.add("border-red-500/25", "bg-red-500/5", "text-red-300");
           el.modalLockBadge.textContent = "Unavailable";
         } else if (locked) {
-          el.modalLockBadge.classList.add("border-violet-500/25", "bg-violet-500/10", "text-violet-300");
+          el.modalLockBadge.classList.add("border-violet-500/25", "bg-[var(--accent)]/10", "text-[var(--accent)]");
           el.modalLockBadge.textContent = "PIN locked";
         } else {
-          el.modalLockBadge.classList.add("border-white/10", "bg-white/[.03]", "text-neutral-400");
+          el.modalLockBadge.classList.add("border-[var(--line)]", "bg-white/[.03]", "text-neutral-400");
           el.modalLockBadge.textContent = "Open text";
         }
       }
@@ -1145,7 +1175,9 @@ import { COPY } from "./copy.js";
         try {
           var response = await apiFetch("/api/files", { method: "POST", body: form });
           saveDeleteToken("file:" + response.group.id, response.deleteToken);
-          upsertLocalFile(response.group);
+          rememberDrop("file", response.group);
+          refreshRecentDrops();
+          if (!response.group.burnAfterRead) upsertLocalFile(response.group);
           renderFilesBoard();
           resetFileUploadForm();
           showQr(response.group.code, response.shareUrl);
@@ -1224,6 +1256,7 @@ import { COPY } from "./copy.js";
       }
 
       function renderFilesBoard() {
+        renderNearby();
         if (!el.filesBoardList) return;
         var now = Date.now();
         state.files = state.files.filter(function (item) { return Number(item.expiresAt) > now; });
@@ -1249,7 +1282,7 @@ import { COPY } from "./copy.js";
           meta.className = "note-meta";
           var sourceBadge = document.createElement("span");
           sourceBadge.className = "note-badge " + (item.source === "received" ? "badge-received" : "badge-mine");
-          sourceBadge.textContent = item.source === "received" ? "Received" : "Mine";
+          sourceBadge.textContent = item.isOwner || getDeleteToken(item.id) || getDeleteToken("file:" + item.id) ? "Mine" : "Nearby";
           var lockBadge = document.createElement("span");
           lockBadge.className = "note-badge" + (item.locked ? " badge-locked" : "");
           lockBadge.textContent = item.locked ? "PIN locked" : "Open";
@@ -1349,6 +1382,7 @@ import { COPY } from "./copy.js";
         el.fileModalExpiry.textContent = formatRemaining(group.expiresAt);
         setFileLockBadge(group.locked);
 
+        if (!group.locked && (!group.files || !group.files.length)) { showFileModalError("All attachments in this drop have already been downloaded."); return; }
         var isUnlocked = group.files && group.files.length && group.files[0].downloadUrl;
         if (isUnlocked) {
           el.fileUnlockForm.classList.add("hidden");
@@ -1360,8 +1394,9 @@ import { COPY } from "./copy.js";
             el.fileModalSharedBy.classList.add("hidden");
           }
           renderFileModalList(group.files);
+          addFileTools(el.fileModalList, group.files, group, toast);
           updateFileDeleteButton(group.id);
-          if (source === "share") {
+          if (source === "share" && !group.burnAfterRead) {
             upsertLocalFile(Object.assign({}, group, {
               source: getDeleteToken("file:" + group.id) ? "mine" : "received",
               addedAt: Date.now()
@@ -1394,7 +1429,7 @@ import { COPY } from "./copy.js";
           var download = document.createElement("a");
           download.href = file.downloadUrl;
           download.setAttribute("download", file.filename);
-          download.className = "shrink-0 rounded-md bg-violet-500 px-4 py-2 text-center text-sm font-semibold text-white transition hover:bg-violet-400";
+          download.className = "shrink-0 rounded-md bg-[var(--accent)] px-4 py-2 text-center text-sm font-semibold text-white transition hover:bg-[var(--accent-strong)]";
           download.textContent = "Download";
           row.appendChild(info);
           row.appendChild(download);
@@ -1465,7 +1500,16 @@ import { COPY } from "./copy.js";
        *  patch entirely so the server's "omitted = unchanged" semantics
        *  protect against silently clearing an existing PIN or burn flag. */
 
-      function applyItemEditPrefill(item) {
+      async function applyItemEditPrefill(item) {
+        if (item && state.editTarget) {
+          state.editTarget.encrypted = Boolean(item.encrypted);
+          state.editTarget.code = item.code;
+          el.editItemText.disabled = false;
+          if (item.encrypted) {
+            if (keyForCode(item.code)) item = await decryptItem(item, item.code);
+            else { el.editItemText.disabled = true; item = Object.assign({}, item, { text: undefined }); el.editItemText.placeholder = "The original encrypted link is required to edit this text. You can still change its metadata."; }
+          }
+        }
         if (!item) return;
         if (typeof item.title === "string") el.editItemTitle.value = item.title;
         if (typeof item.text === "string") el.editItemText.value = item.text;
@@ -1489,17 +1533,20 @@ import { COPY } from "./copy.js";
         el.editItemSubmit.disabled = false;
         el.editItemSubmit.textContent = "Save changes";
 
-        applyItemEditPrefill(prefillData);
+        await applyItemEditPrefill(prefillData);
 
         el.editItemModal.classList.remove("hidden");
         el.editItemModal.classList.add("flex");
         el.editItemModal.setAttribute("aria-hidden", "false");
         lockBodyScroll();
 
-        if (tier === "owner") {
+        if (tier === "admin") {
+          try { var adminDetail = await adminFetch("/api/admin/item/" + encodeURIComponent(itemId)); await applyItemEditPrefill(adminDetail.item); } catch (error) {toast(error.message,"error");}
+        }
+        if (tier === "owner" || tier === "anonymous") {
           try {
-            var response = await apiFetch("/api/me/shares/notes/" + encodeURIComponent(itemId));
-            applyItemEditPrefill(response.item);
+            var response = await apiFetch(tier === "owner" ? "/api/me/shares/notes/" + encodeURIComponent(itemId) : "/api/item/" + encodeURIComponent(itemId), { headers: tier === "anonymous" ? { "x-airtext-owner": getDeleteToken(itemId) } : {} });
+            await applyItemEditPrefill(response.item);
           } catch (error) {
             toast(error.message || "Unable to load this note for editing.", "error");
           }
@@ -1519,7 +1566,7 @@ import { COPY } from "./copy.js";
         var title = el.editItemTitle.value.trim();
         if (title) patch.title = title;
         var text = el.editItemText.value;
-        if (text.trim()) patch.text = text;
+        if (!el.editItemText.disabled && text.trim()) patch.text = text;
 
         var lockKnown = target.tier !== "admin";
         if (lockKnown || target.lockTouched) {
@@ -1547,6 +1594,12 @@ import { COPY } from "./copy.js";
         el.editItemSubmit.disabled = true;
         el.editItemSubmit.textContent = "Saving…";
         try {
+          if (target.encrypted && patch.text !== undefined) {
+            if (!keyForCode(target.code)) throw new Error("The original encryption key is required to edit the text.");
+            var updatedEnvelope = await encryptText(patch.text, keyForCode(target.code));
+            patch.text = updatedEnvelope.text; patch.encrypted = true;
+            patch.encryptionIv = updatedEnvelope.encryptionIv; patch.encryptionVersion = 1;
+          }
           var response;
           if (target.tier === "anonymous") {
             var token = getDeleteToken(target.id);
@@ -1564,8 +1617,11 @@ import { COPY } from "./copy.js";
               method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify(patch)
             });
           }
+          rememberDrop("note", response.item); refreshRecentDrops();
+          if (response.item.burnAfterRead || response.item.encrypted) state.items = state.items.filter(function (entry) { return entry.id !== target.id; });
           toast(response.message || "Note updated.", "success");
           closeEditItemModal();
+          if (state.currentItem && state.currentItem.id === target.id) await showItemResponse(response.item, state.currentSource, response.item.code);
           if (target.tier === "anonymous") {
             var existing = state.items.find(function (entry) { return entry.id === target.id; });
             if (existing) Object.assign(existing, response.item);
@@ -1612,7 +1668,7 @@ import { COPY } from "./copy.js";
         target.existingFiles.forEach(function (file) {
           var removed = target.removeFileIds.indexOf(file.id) !== -1;
           var row = document.createElement("div");
-          row.className = "flex items-center justify-between gap-2 rounded-lg border border-white/10 bg-black/20 px-3 py-2";
+          row.className = "flex items-center justify-between gap-2 rounded-lg border border-[var(--line)] bg-black/20 px-3 py-2";
           var label = document.createElement("span");
           label.className = "truncate " + (removed ? "text-slate-600 line-through" : "text-slate-300");
           label.textContent = file.filename;
@@ -1690,9 +1746,9 @@ import { COPY } from "./copy.js";
         el.editFileModal.setAttribute("aria-hidden", "false");
         lockBodyScroll();
 
-        if (tier === "owner") {
+        if (tier === "owner" || tier === "anonymous") {
           try {
-            var response = await apiFetch("/api/me/shares/files/" + encodeURIComponent(groupId));
+            var response = await apiFetch(tier === "owner" ? "/api/me/shares/files/" + encodeURIComponent(groupId) : "/api/file/" + encodeURIComponent(groupId), {headers:tier === "anonymous" ? {"x-airtext-owner":getDeleteToken("file:" + groupId)} : {}});
             applyFileEditPrefill(response.group);
           } catch (error) {
             toast(error.message || "Unable to load this file share for editing.", "error");
@@ -1749,6 +1805,8 @@ import { COPY } from "./copy.js";
           } else {
             response = await adminFetch("/api/admin/file/" + encodeURIComponent(target.id), { method: "PATCH", body: form });
           }
+          rememberDrop("file", response.group); refreshRecentDrops();
+          if (state.currentFile && state.currentFile.id === target.id) showFileResponse(response.group, "owner", response.group.code);
           toast(response.message || "File updated.", "success");
           closeEditFileModal();
           if (target.tier === "anonymous") {
@@ -1827,10 +1885,10 @@ import { COPY } from "./copy.js";
           el.fileModalLockBadge.classList.add("border-red-500/25", "bg-red-500/5", "text-red-300");
           el.fileModalLockBadge.textContent = "Unavailable";
         } else if (locked) {
-          el.fileModalLockBadge.classList.add("border-violet-500/25", "bg-violet-500/10", "text-violet-300");
+          el.fileModalLockBadge.classList.add("border-violet-500/25", "bg-[var(--accent)]/10", "text-[var(--accent)]");
           el.fileModalLockBadge.textContent = "PIN locked";
         } else {
-          el.fileModalLockBadge.classList.add("border-white/10", "bg-white/[.03]", "text-neutral-400");
+          el.fileModalLockBadge.classList.add("border-[var(--line)]", "bg-white/[.03]", "text-neutral-400");
           el.fileModalLockBadge.textContent = "Open file";
         }
       }
@@ -1896,7 +1954,13 @@ import { COPY } from "./copy.js";
         link.click();
       }
 
+      function qrShareLink(link) {
+        var url = new URL(link, window.location.origin);
+        url.searchParams.set("via", "qr");
+        return url.href;
+      }
       async function showQr(code, link) {
+        link = withKey(link);
         state.qrCode = code;
         el.qrCodeText.textContent = code;
         el.qrLinkInput.value = link;
@@ -1908,7 +1972,7 @@ import { COPY } from "./copy.js";
 
         if (typeof window.QRCode === "function") {
           new window.QRCode(el.qrOutput, {
-            text: link + (link.indexOf("?") === -1 ? "?via=qr" : "&via=qr"),
+            text: qrShareLink(link),
             width: 220,
             height: 220,
             colorDark: "#11120f",
@@ -2023,6 +2087,7 @@ import { COPY } from "./copy.js";
         var text = String(value || "").trim();
         try {
           var parsed = new URL(text, window.location.origin);
+          rememberLinkKey(parsed.href);
           var noteMatch = parsed.pathname.match(/^\/s\/([A-Za-z0-9]{4,12})\/?$/);
           if (noteMatch) return { code: normalizeCode(noteMatch[1]), kind: "note" };
           var fileMatch = parsed.pathname.match(/^\/f\/([A-Za-z0-9]{4,12})\/?$/);
@@ -2230,7 +2295,8 @@ import { COPY } from "./copy.js";
         var path = window.location.pathname;
         document.querySelectorAll("[data-nav-path]").forEach(function (link) {
           var active = link.getAttribute("data-nav-path") === path;
-          link.classList.toggle("text-white", active);
+          link.classList.toggle("nav-active", active);
+          if (active && link.closest("details.nav-dropdown")) link.closest("details.nav-dropdown").classList.add("nav-active");
           if (active) link.setAttribute("aria-current", "page");
           else link.removeAttribute("aria-current");
         });
@@ -2390,7 +2456,7 @@ import { COPY } from "./copy.js";
         if (!user) {
           var signIn = document.createElement("a");
           signIn.href = "/login";
-          signIn.className = "inline-block text-violet-400";
+          signIn.className = "inline-block text-[var(--accent)]";
           signIn.textContent = "Sign in →";
           el.drawerAuthSlot.appendChild(signIn);
           return;
@@ -2416,13 +2482,13 @@ import { COPY } from "./copy.js";
         links.className = "mt-3 grid gap-2 text-sm";
         var myDrops = document.createElement("a");
         myDrops.href = "/account";
-        myDrops.className = "text-violet-400";
+        myDrops.className = "text-[var(--accent)]";
         myDrops.textContent = "My Drops →";
         links.appendChild(myDrops);
         if (user.rank === 0) {
           var adminLink = document.createElement("a");
           adminLink.href = "/admin";
-          adminLink.className = "text-violet-400";
+          adminLink.className = "text-[var(--accent)]";
           adminLink.textContent = "Admin panel →";
           links.appendChild(adminLink);
         }
@@ -2666,6 +2732,7 @@ import { COPY } from "./copy.js";
           var expiry = document.createElement("span");
           expiry.className = "note-expiry";
           expiry.textContent = formatRemaining(note.expiresAt);
+          expiry.dataset.expires = String(note.expiresAt);
           titleWrap.appendChild(meta);
           titleWrap.appendChild(title);
           titleWrap.appendChild(expiry);
@@ -2704,6 +2771,17 @@ import { COPY } from "./copy.js";
           deleteButton.setAttribute("data-action", "account-delete-note");
           deleteButton.setAttribute("data-account-note-id", note.id);
           deleteButton.textContent = "Delete";
+          var openButton = document.createElement("button");
+          openButton.type = "button";
+          openButton.className = "action-btn primary-action";
+          openButton.textContent = "Open";
+          openButton.addEventListener("click", function () { openOwnedDrop("note", note.id); });
+          title.classList.add("clickable-drop-title");
+          title.tabIndex = 0;
+          title.setAttribute("role", "button");
+          title.addEventListener("click", function () { openOwnedDrop("note", note.id); });
+          title.addEventListener("keydown", function (event) { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); openOwnedDrop("note", note.id); } });
+          actions.appendChild(openButton);
           actions.appendChild(copyButton);
           actions.appendChild(qrButton);
           actions.appendChild(editButton);
@@ -2751,6 +2829,7 @@ import { COPY } from "./copy.js";
           var expiry = document.createElement("span");
           expiry.className = "note-expiry";
           expiry.textContent = formatRemaining(group.expiresAt);
+          expiry.dataset.expires = String(group.expiresAt);
           titleWrap.appendChild(meta);
           titleWrap.appendChild(title);
           titleWrap.appendChild(expiry);
@@ -2789,6 +2868,17 @@ import { COPY } from "./copy.js";
           deleteButton.setAttribute("data-action", "account-delete-file");
           deleteButton.setAttribute("data-account-file-id", group.id);
           deleteButton.textContent = "Delete";
+          var openButton = document.createElement("button");
+          openButton.type = "button";
+          openButton.className = "action-btn primary-action";
+          openButton.textContent = "Open";
+          openButton.addEventListener("click", function () { openOwnedDrop("file", group.id); });
+          title.classList.add("clickable-drop-title");
+          title.tabIndex = 0;
+          title.setAttribute("role", "button");
+          title.addEventListener("click", function () { openOwnedDrop("file", group.id); });
+          title.addEventListener("keydown", function (event) { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); openOwnedDrop("file", group.id); } });
+          actions.appendChild(openButton);
           actions.appendChild(copyButton);
           actions.appendChild(qrButton);
           actions.appendChild(editButton);
@@ -3295,7 +3385,7 @@ import { COPY } from "./copy.js";
           // "Open once" badge can only be shown while that filter is active
           // (every visible row is then known to match it) -- see the note in
           // this file's final report about src/routes/admin.ts's DropRow.
-          if (state.admin.drops.filter === "burn") {
+          if (item.burnAfterRead) {
             var burnBadge = document.createElement("span");
             burnBadge.className = "note-badge badge-burn";
             burnBadge.textContent = "Open once";
@@ -3773,21 +3863,21 @@ import { COPY } from "./copy.js";
 
           var editButton = document.createElement("button");
           editButton.type = "button";
-          editButton.className = "rounded-md border border-white/10 px-3 py-2 text-xs text-slate-300";
+          editButton.className = "rounded-md border border-[var(--line)] px-3 py-2 text-xs text-slate-300";
           editButton.setAttribute("data-action", "admin-toggle-user-edit");
           editButton.setAttribute("data-user-id", user.id);
           editButton.textContent = "Edit";
 
           var limitsButton = document.createElement("button");
           limitsButton.type = "button";
-          limitsButton.className = "rounded-md border border-white/10 px-3 py-2 text-xs text-slate-300";
+          limitsButton.className = "rounded-md border border-[var(--line)] px-3 py-2 text-xs text-slate-300";
           limitsButton.setAttribute("data-action", "admin-toggle-user-limits");
           limitsButton.setAttribute("data-user-id", user.id);
           limitsButton.textContent = "Limits";
 
           var toggleButton = document.createElement("button");
           toggleButton.type = "button";
-          toggleButton.className = "rounded-md border border-white/10 px-3 py-2 text-xs text-slate-300";
+          toggleButton.className = "rounded-md border border-[var(--line)] px-3 py-2 text-xs text-slate-300";
           toggleButton.setAttribute("data-action", "admin-toggle-user-status");
           toggleButton.setAttribute("data-user-id", user.id);
           toggleButton.setAttribute("data-user-status", user.status === "active" ? "disabled" : "active");
@@ -4464,10 +4554,13 @@ import { COPY } from "./copy.js";
       }
 
       async function apiFetch(url, options) {
+        if (options && options.body instanceof FormData) return uploadRequest(url, options);
         var response;
         try {
           var config = Object.assign({}, options || {});
           config.headers = Object.assign({ "accept": "application/json" }, (options && options.headers) || {});
+          var encryptedCode = url.match(/^\/api\/share\/([A-Za-z0-9]{4,12})(?:[/?]|$)/);
+          if (encryptedCode && keyForCode(encryptedCode[1])) config.headers["x-airtext-decrypt-ready"] = "1";
           response = await fetch(url, config);
         } catch (error) {
           throw new Error("Network error. Check your connection and try again.");
@@ -4490,7 +4583,10 @@ import { COPY } from "./copy.js";
       function startPolling() {
         if (state.pollingTimer) window.clearInterval(state.pollingTimer);
         state.pollingTimer = window.setInterval(function () {
-          if (document.visibilityState === "visible") loadLocalItems(false);
+          if (document.visibilityState === "visible") {
+            if (el.boardList) loadLocalItems(false);
+            if (el.filesBoardList) loadLocalFiles(false);
+          }
         }, 10000);
       }
 
@@ -4505,6 +4601,10 @@ import { COPY } from "./copy.js";
         state.items = state.items.filter(function (item) { return Number(item.expiresAt) > Date.now(); });
         if (state.items.length !== before) renderLocalItems();
 
+        var filesBefore = state.files.length;
+        state.files = state.files.filter(function (item) { return Number(item.expiresAt) > Date.now(); });
+        if (filesBefore !== state.files.length) renderFilesBoard();
+        if (before !== state.items.length || filesBefore !== state.files.length) renderNearby();
         updateBoardClock();
       }
 
@@ -4799,6 +4899,7 @@ import { COPY } from "./copy.js";
       }
 
       async function copyText(value, successMessage) {
+        if (typeof value === "string" && value.startsWith(window.location.origin + "/s/")) value = withKey(value);
         if (!value) return toast("Nothing to copy.", "error");
         try {
           await navigator.clipboard.writeText(String(value));
@@ -4822,7 +4923,7 @@ import { COPY } from "./copy.js";
         var isError = type === "error";
         item.className = "toast-enter pointer-events-auto flex items-start gap-3 rounded-md border p-3 shadow-2xl " + (isError
           ? "border-red-500/25 bg-[#2a1b1b] text-red-100"
-          : "border-violet-500/25 bg-[#242033] text-violet-100");
+          : "border-violet-500/25 bg-[var(--panel)] text-violet-100");
 
         var dot = document.createElement("span");
         dot.className = "mt-1 h-2.5 w-2.5 shrink-0 rounded-full " + (isError ? "bg-red-400" : "bg-violet-400");
@@ -4840,6 +4941,96 @@ import { COPY } from "./copy.js";
         item.appendChild(close);
         container.appendChild(item);
         window.setTimeout(function () { item.remove(); }, 4500);
+      }
+
+
+      function ensureEncryptionKey(code) {
+        if (keyForCode(code)) return;
+        var value = window.prompt("Paste the original encrypted share link or its key. The service cannot recover a lost key.");
+        if (!value) throw new Error("The original encrypted link is required. This drop has not been consumed.");
+        if (/^https?:\/\//i.test(value)) rememberLinkKey(value); else storeKey(code, value.trim());
+        if (!keyForCode(code)) throw new Error("That link has no key for this drop.");
+      }
+      function ownsDrop(kind, id) { return Boolean(getDeleteToken((kind === "file" ? "file:" : "") + id)); }
+      function recentActions() {
+        return {
+          owns: ownsDrop,
+          open: openOwnedDrop,
+          copy: function (item) { copyText(dropLink(item), "Share link copied."); },
+          qr: function (item) { showQr(item.code, dropLink(item)); },
+          edit: function (kind, id) { if (kind === "file") openEditFileModal(id, "anonymous"); else openEditItemModal(id, "anonymous"); },
+          remove: async function (item) {
+            if (!window.confirm("Delete this drop now?")) return;
+            try {
+              await apiFetch("/api/" + (item.kind === "file" ? "file/" : "item/") + item.id, { method: "DELETE", headers: { "content-type": "application/json" }, body: JSON.stringify({ deleteToken: getDeleteToken((item.kind === "file" ? "file:" : "") + item.id) }) });
+              removeDeleteToken((item.kind === "file" ? "file:" : "") + item.id); refreshRecentDrops(); loadLocalItems(false); loadLocalFiles(false);
+            } catch (error) { toast(error.message, "error"); }
+          }
+        };
+      }
+      function dropLink(item) { return withKey(window.location.origin + (item.kind === "file" ? "/f/" : "/s/") + item.code); }
+      function refreshRecentDrops() { renderRecentDrops(recentActions()); }
+      async function openOwnedDrop(kind, id) {
+        try {
+          var token = getDeleteToken((kind === "file" ? "file:" : "") + id);
+          var data = await apiFetch("/api/" + (kind === "file" ? "file/" : "item/") + encodeURIComponent(id), { headers: token ? { "x-airtext-owner": token } : {} });
+          if (kind === "file") { openFileModal(); showFileResponse(data.group, "owner", data.group.code); }
+          else { openItemModal(); showItemResponse(data.item, "owner", data.item.code); }
+        } catch (error) { if (error.status === 404) { forgetDrop(id); refreshRecentDrops(); } toast(error.message, "error"); }
+      }
+      function renderNearby() {
+        renderNearbyBoard(state.items, state.files, {
+          owns: ownsDrop, remaining: formatRemaining,
+          openNearby: function (kind,id) { if (kind === "file") openLocalFile(id); else openLocalItem(id); },
+          copyNearby: async function (id) { try { var data = await apiFetch("/api/local/item/" + id); copyText(data.item.text, "Text copied."); } catch (error) {toast(error.message, "error");} },
+          qr: function (item) { showQr(item.code, dropLink(item)); }
+        });
+      }
+      function receiveValue(value) {
+        var text = String(value || "").trim();
+        if (/^https?:\/\//i.test(text)) {
+          var parsed = extractCodeFromScan(text);
+          if (!parsed.code || parsed.kind === "unknown") return toast("Paste an AirText share link.", "error");
+          el.joinCode.value = parsed.code;
+          if (parsed.kind === "file") openFileShareByCode(parsed.code, true, "link"); else openShareByCode(parsed.code, true, "link");
+          return;
+        }
+        if (!/^[A-Za-z0-9]{4,12}$/.test(text)) return toast("Enter a code of 4–12 letters or numbers.", "error");
+        openAnyShareByCode(text, true, "code");
+      }
+      async function hydrateLegacyDropHistory() {
+        try {
+          if (localStorage.getItem("airtext_history_v31")) return;
+          var known = new Set(recentDrops().map(function (item) { return item.id; }));
+          var tokens = Object.entries(ownerTokenMap()).slice(-50);
+          for (var entry of tokens) {
+            var kind = entry[0].startsWith("file:") ? "file" : "note";
+            var id = entry[0].replace(/^file:/, "");
+            if (known.has(id)) continue;
+            try {
+              var data = await apiFetch("/api/" + (kind === "file" ? "file/" : "item/") + encodeURIComponent(id), {headers:{"x-airtext-owner":entry[1]}});
+              rememberDrop(kind, kind === "file" ? data.group : data.item);
+            } catch (error) { if (error.status === 404) removeDeleteToken(entry[0]); }
+          }
+          localStorage.setItem("airtext_history_v31","1"); refreshRecentDrops();
+        } catch { /* Storage restrictions do not affect sharing. */ }
+      }
+      function initDropFeatures() {
+        refreshRecentDrops();
+        void hydrateLegacyDropHistory();
+        var encryptionOption = document.getElementById("encryption-option");
+        if (encryptionOption) encryptionOption.hidden = !APP.allowClientEncryption;
+        var search = document.getElementById("nearby-search");
+        if (search) search.addEventListener("input", renderNearby);
+        document.querySelectorAll("[data-nearby-filter]").forEach(function (button) {
+          button.addEventListener("click", function () {
+            document.querySelectorAll("[data-nearby-filter]").forEach(function (entry) { entry.setAttribute("aria-pressed", String(entry === button)); });
+            renderNearby();
+          });
+        });
+        var paste = document.getElementById("receive-paste");
+        if (paste) paste.addEventListener("click", async function () { try { receiveValue(await navigator.clipboard.readText()); } catch { toast("Paste into the code field using your keyboard.", "error"); el.joinCode.focus(); } });
+        window.addEventListener("storage", refreshRecentDrops);
       }
 
       function ownerTokenMap() {
@@ -4864,6 +5055,8 @@ import { COPY } from "./copy.js";
       function removeDeleteToken(itemId) {
         var map = ownerTokenMap();
         delete map[itemId];
+        forgetDrop(itemId.replace(/^file:/, ""));
+        refreshRecentDrops();
         localStorage.setItem("airtext_owner_tokens", JSON.stringify(map));
       }
 

@@ -89,9 +89,9 @@ const SITE_HEADER = String.raw`<header class="site-header sticky top-0 z-40 bord
           <svg data-theme-icon viewBox="0 0 24 24" class="h-5 w-5"><use href="#i-theme"></use></svg>
         </button>
         __NAV_AUTH_SLOT__
-        <button type="button" data-action="open-drawer" class="icon-button" aria-label="Open menu">
+        <button type="button" data-action="open-drawer" class="min-[901px]:hidden icon-button" aria-label="Open menu">
           <svg viewBox="0 0 24 24" class="h-5 w-5"><use href="#i-menu"></use></svg>
-        </button>
+        </button><button type="button" class="icon-button min-[901px]:hidden" data-action="open-scanner" aria-label="Scan a share QR code"><svg viewBox="0 0 24 24" class="h-4 w-4"><use href="#i-qr-grid"></use></svg></button>
       </nav>
     </div>
   </header>`;
@@ -207,11 +207,11 @@ const SIDE_DRAWER = String.raw`<div id="drawer-backdrop" class="drawer-backdrop"
     <section class="drawer-section text-sm leading-6 text-slate-500">
       <p><strong class="text-white">Privacy:</strong> <span id="privacy-text">Notes and configuration use D1. Network addresses are hashed before use; raw IP addresses are not stored in analytics.</span></p>
       <div class="mt-4 flex flex-wrap gap-x-4 gap-y-1 text-xs">
-        <a href="/privacy" class="text-violet-400">Privacy policy</a>
-        <a href="/terms" class="text-violet-400">Terms of service</a>
+        <a href="/privacy" class="text-[var(--accent)]">Privacy policy</a>
+        <a href="/terms" class="text-[var(--accent)]">Terms of service</a>
       </div>
       <div id="drawer-auth-slot" class="mt-5">
-        <a href="/login" class="inline-block text-violet-400">Sign in →</a>
+        <a href="/login" class="inline-block text-[var(--accent)]">Sign in →</a>
       </div>
     </section>
   </aside>`;
@@ -235,7 +235,7 @@ const SHARED_MODALS = String.raw`<div id="maintenance-modal" class="maintenance-
         <div class="min-w-0">
           <div class="flex flex-wrap items-center gap-2">
             <span id="modal-lock-badge" class="rounded border px-2 py-1 text-[10px] font-semibold uppercase tracking-wider"></span>
-            <span id="modal-expiry" data-expires="0" class="rounded border border-white/10 px-2 py-1 text-[10px] text-neutral-500">Expires soon</span>
+            <span id="modal-expiry" data-expires="0" class="rounded border border-[var(--line)] px-2 py-1 text-[10px] text-neutral-500">Expires soon</span>
           </div>
           <h2 id="modal-title" class="mt-3 truncate text-xl font-semibold text-white">Shared text</h2>
         </div>
@@ -246,7 +246,7 @@ const SHARED_MODALS = String.raw`<div id="maintenance-modal" class="maintenance-
 
       <div class="scrollbar-thin max-h-[calc(92vh-80px)] overflow-y-auto p-5 sm:p-6">
         <div id="modal-loading" class="py-14 text-center">
-          <span class="mx-auto block h-7 w-7 animate-spin rounded-full border-2 border-white/10 border-t-violet-400"></span>
+          <span class="mx-auto block h-7 w-7 animate-spin rounded-full border-2 border-[var(--line)] border-t-violet-400"></span>
           <p class="mt-3 text-sm text-neutral-500">Opening…</p>
         </div>
 
@@ -257,8 +257,8 @@ const SHARED_MODALS = String.raw`<div id="maintenance-modal" class="maintenance-
             <h3 class="font-medium text-white">PIN required</h3>
             <p class="mt-1 text-sm text-neutral-500">Enter the PIN provided by the sender.</p>
             <label for="unlock-pin" class="sr-only">Secret PIN</label>
-            <input id="unlock-pin" type="password" maxlength="__MAX_PIN_LENGTH__" autocomplete="current-password" placeholder="Secret PIN" class="mt-5 w-full rounded-xl border border-white/10 bg-black/25 px-4 py-3 text-sm text-white outline-none placeholder:text-slate-700 focus:border-cyan-400/50">
-            <button id="unlock-submit" type="submit" class="mt-3 w-full rounded-xl bg-violet-500 px-5 py-3 text-sm font-semibold text-white transition hover:bg-violet-400 disabled:opacity-50">
+            <input id="unlock-pin" type="password" maxlength="__MAX_PIN_LENGTH__" autocomplete="current-password" placeholder="Secret PIN" class="mt-5 w-full rounded-xl border border-[var(--line)] bg-black/25 px-4 py-3 text-sm text-white outline-none placeholder:text-slate-700 focus:border-cyan-400/50">
+            <button id="unlock-submit" type="submit" class="mt-3 w-full rounded-xl bg-[var(--accent)] px-5 py-3 text-sm font-semibold text-white transition hover:bg-[var(--accent-strong)] disabled:opacity-50">
               Unlock
             </button>
           </div>
@@ -275,10 +275,10 @@ const SHARED_MODALS = String.raw`<div id="maintenance-modal" class="maintenance-
           </div>
 
           <div class="mt-4 flex flex-col gap-2 sm:flex-row">
-            <button type="button" data-action="show-current-qr" class="flex-1 rounded-md border border-white/10 px-4 py-3 text-sm text-neutral-300 transition hover:border-violet-500/60 hover:bg-violet-500/10 hover:text-white">
+            <button type="button" data-action="show-current-qr" class="flex-1 rounded-md border border-[var(--line)] px-4 py-3 text-sm text-neutral-300 transition hover:border-violet-500/60 hover:bg-[var(--accent-soft)] hover:text-white">
               Code & QR
             </button>
-            <button id="edit-item-button" type="button" data-action="open-edit-item-modal" class="hidden flex-1 items-center justify-center rounded-md border border-white/10 px-4 py-3 text-sm text-neutral-300 transition hover:bg-white/5 hover:text-white">
+            <button id="edit-item-button" type="button" data-action="open-edit-item-modal" class="hidden flex-1 items-center justify-center rounded-md border border-[var(--line)] px-4 py-3 text-sm text-neutral-300 transition hover:bg-white/5 hover:text-white">
               Edit
             </button>
             <button id="delete-item-button" type="button" data-action="delete-current-item" class="hidden flex-1 items-center justify-center rounded-md border border-red-500/20 px-4 py-3 text-sm text-red-300 transition hover:bg-red-500/10">
@@ -296,7 +296,7 @@ const SHARED_MODALS = String.raw`<div id="maintenance-modal" class="maintenance-
         <div class="min-w-0">
           <div class="flex flex-wrap items-center gap-2">
             <span id="file-modal-lock-badge" class="rounded border px-2 py-1 text-[10px] font-semibold uppercase tracking-wider"></span>
-            <span id="file-modal-expiry" class="rounded border border-white/10 px-2 py-1 text-[10px] text-neutral-500">Expires soon</span>
+            <span id="file-modal-expiry" class="rounded border border-[var(--line)] px-2 py-1 text-[10px] text-neutral-500">Expires soon</span>
           </div>
           <h2 id="file-modal-title" class="mt-3 truncate text-xl font-semibold text-white">Shared file</h2>
         </div>
@@ -307,7 +307,7 @@ const SHARED_MODALS = String.raw`<div id="maintenance-modal" class="maintenance-
 
       <div class="scrollbar-thin max-h-[calc(92vh-80px)] overflow-y-auto p-5 sm:p-6">
         <div id="file-modal-loading" class="py-14 text-center">
-          <span class="mx-auto block h-7 w-7 animate-spin rounded-full border-2 border-white/10 border-t-violet-400"></span>
+          <span class="mx-auto block h-7 w-7 animate-spin rounded-full border-2 border-[var(--line)] border-t-violet-400"></span>
           <p class="mt-3 text-sm text-neutral-500">Opening…</p>
         </div>
 
@@ -318,8 +318,8 @@ const SHARED_MODALS = String.raw`<div id="maintenance-modal" class="maintenance-
             <h3 class="font-medium text-white">PIN required</h3>
             <p class="mt-1 text-sm text-neutral-500">Enter the PIN provided by the sender.</p>
             <label for="file-unlock-pin" class="sr-only">Secret PIN</label>
-            <input id="file-unlock-pin" type="password" maxlength="__MAX_PIN_LENGTH__" autocomplete="current-password" placeholder="Secret PIN" class="mt-5 w-full rounded-xl border border-white/10 bg-black/25 px-4 py-3 text-sm text-white outline-none placeholder:text-slate-700 focus:border-cyan-400/50">
-            <button id="file-unlock-submit" type="submit" class="mt-3 w-full rounded-xl bg-violet-500 px-5 py-3 text-sm font-semibold text-white transition hover:bg-violet-400 disabled:opacity-50">
+            <input id="file-unlock-pin" type="password" maxlength="__MAX_PIN_LENGTH__" autocomplete="current-password" placeholder="Secret PIN" class="mt-5 w-full rounded-xl border border-[var(--line)] bg-black/25 px-4 py-3 text-sm text-white outline-none placeholder:text-slate-700 focus:border-cyan-400/50">
+            <button id="file-unlock-submit" type="submit" class="mt-3 w-full rounded-xl bg-[var(--accent)] px-5 py-3 text-sm font-semibold text-white transition hover:bg-[var(--accent-strong)] disabled:opacity-50">
               Unlock
             </button>
           </div>
@@ -329,8 +329,8 @@ const SHARED_MODALS = String.raw`<div id="maintenance-modal" class="maintenance-
           <p id="file-modal-shared-by" class="mb-2 hidden text-xs text-neutral-500"></p>
           <div id="file-modal-list" class="grid gap-2"></div>
           <div class="mt-4 flex flex-col gap-2 sm:flex-row">
-            <button type="button" data-action="show-current-file-qr" class="flex-1 rounded-md border border-white/10 px-4 py-3 text-sm text-neutral-300 transition hover:border-violet-500/60 hover:bg-violet-500/10 hover:text-white">Code & QR</button>
-            <button id="edit-file-button" type="button" data-action="open-edit-file-modal" class="hidden flex-1 items-center justify-center rounded-md border border-white/10 px-4 py-3 text-sm text-neutral-300 transition hover:bg-white/5 hover:text-white">Edit</button>
+            <button type="button" data-action="show-current-file-qr" class="flex-1 rounded-md border border-[var(--line)] px-4 py-3 text-sm text-neutral-300 transition hover:border-violet-500/60 hover:bg-[var(--accent-soft)] hover:text-white">Code & QR</button>
+            <button id="edit-file-button" type="button" data-action="open-edit-file-modal" class="hidden flex-1 items-center justify-center rounded-md border border-[var(--line)] px-4 py-3 text-sm text-neutral-300 transition hover:bg-white/5 hover:text-white">Edit</button>
             <button id="delete-file-button" type="button" data-action="delete-current-file" class="hidden flex-1 items-center justify-center rounded-md border border-red-500/20 px-4 py-3 text-sm text-red-300 transition hover:bg-red-500/10">Delete</button>
           </div>
         </div>
@@ -350,9 +350,9 @@ const SHARED_MODALS = String.raw`<div id="maintenance-modal" class="maintenance-
       <form id="edit-item-form" class="scrollbar-thin max-h-[calc(92vh-80px)] overflow-y-auto p-5 sm:p-6" novalidate>
         <div id="edit-item-error" class="hidden mb-4 border border-red-500/20 bg-red-500/5 p-4 text-sm text-red-300"></div>
         <label for="edit-item-title" class="sr-only">Title</label>
-        <input id="edit-item-title" type="text" maxlength="__MAX_TITLE_LENGTH__" placeholder="Title" class="w-full rounded-lg border border-white/10 bg-black/25 px-3 py-2.5 text-sm text-white outline-none placeholder:text-slate-600 focus:border-cyan-400/50">
+        <input id="edit-item-title" type="text" maxlength="__MAX_TITLE_LENGTH__" placeholder="Title" class="w-full rounded-lg border border-[var(--line)] bg-black/25 px-3 py-2.5 text-sm text-white outline-none placeholder:text-slate-600 focus:border-cyan-400/50">
         <label for="edit-item-text" class="sr-only">Text</label>
-        <textarea id="edit-item-text" rows="8" maxlength="__MAX_TEXT_LENGTH__" placeholder="Leave blank to keep the current text" class="scrollbar-thin mt-3 w-full resize-y rounded-lg border border-white/10 bg-black/25 p-3 text-sm text-slate-200 outline-none placeholder:text-slate-600 focus:border-cyan-400/50"></textarea>
+        <textarea id="edit-item-text" rows="8" maxlength="__MAX_TEXT_LENGTH__" placeholder="Leave blank to keep the current text" class="scrollbar-thin mt-3 w-full resize-y rounded-lg border border-[var(--line)] bg-black/25 p-3 text-sm text-slate-200 outline-none placeholder:text-slate-600 focus:border-cyan-400/50"></textarea>
         <div class="mt-4 flex flex-wrap items-center gap-3">
           <label class="inline-flex cursor-pointer items-center gap-2 text-sm text-neutral-400">
             <input id="edit-item-lock-toggle" type="checkbox" class="peer sr-only">
@@ -361,7 +361,7 @@ const SHARED_MODALS = String.raw`<div id="maintenance-modal" class="maintenance-
           </label>
           <div id="edit-item-pin-field-wrap" class="hidden">
             <label for="edit-item-pin" class="sr-only">New PIN</label>
-            <input id="edit-item-pin" type="password" minlength="__MIN_PIN_LENGTH__" maxlength="__MAX_PIN_LENGTH__" autocomplete="new-password" placeholder="Leave blank to keep current PIN" class="w-56 rounded-lg border border-white/10 bg-black/25 px-3 py-2 text-sm text-white outline-none placeholder:text-slate-600 focus:border-cyan-400/50">
+            <input id="edit-item-pin" type="password" minlength="__MIN_PIN_LENGTH__" maxlength="__MAX_PIN_LENGTH__" autocomplete="new-password" placeholder="Leave blank to keep current PIN" class="w-56 rounded-lg border border-[var(--line)] bg-black/25 px-3 py-2 text-sm text-white outline-none placeholder:text-slate-600 focus:border-cyan-400/50">
           </div>
           <label class="inline-flex cursor-pointer items-center gap-2 text-sm text-neutral-400">
             <input id="edit-item-burn-toggle" type="checkbox" class="peer sr-only">
@@ -369,7 +369,7 @@ const SHARED_MODALS = String.raw`<div id="maintenance-modal" class="maintenance-
             <span>Open once</span>
           </label>
           <label for="edit-item-ttl-select" class="sr-only">Expiry</label>
-          <select id="edit-item-ttl-select" class="w-auto rounded-lg border border-white/10 bg-black/25 px-3 py-2 text-sm text-slate-300 outline-none focus:border-cyan-400/50">
+          <select id="edit-item-ttl-select" class="w-auto rounded-lg border border-[var(--line)] bg-black/25 px-3 py-2 text-sm text-slate-300 outline-none focus:border-cyan-400/50">
             <option value="">Keep current expiry</option>
             <option value="600">10 minutes from now</option>
             <option value="3600">1 hour from now</option>
@@ -381,7 +381,7 @@ const SHARED_MODALS = String.raw`<div id="maintenance-modal" class="maintenance-
         </div>
         <div class="mt-5 flex flex-col gap-2 sm:flex-row">
           <button type="submit" id="edit-item-submit" class="primary-action flex-1 px-5 py-3 text-sm font-semibold">Save changes</button>
-          <button type="button" data-action="close-edit-item-modal" class="flex-1 rounded-md border border-white/10 px-5 py-3 text-sm text-neutral-300 transition hover:bg-white/5 hover:text-white">Cancel</button>
+          <button type="button" data-action="close-edit-item-modal" class="flex-1 rounded-md border border-[var(--line)] px-5 py-3 text-sm text-neutral-300 transition hover:bg-white/5 hover:text-white">Cancel</button>
         </div>
       </form>
     </div>
@@ -399,7 +399,7 @@ const SHARED_MODALS = String.raw`<div id="maintenance-modal" class="maintenance-
       <form id="edit-file-form" class="scrollbar-thin max-h-[calc(92vh-80px)] overflow-y-auto p-5 sm:p-6" novalidate>
         <div id="edit-file-error" class="hidden mb-4 border border-red-500/20 bg-red-500/5 p-4 text-sm text-red-300"></div>
         <label for="edit-file-title" class="sr-only">Title</label>
-        <input id="edit-file-title" type="text" maxlength="80" placeholder="Title" class="w-full rounded-lg border border-white/10 bg-black/25 px-3 py-2.5 text-sm text-white outline-none placeholder:text-slate-600 focus:border-cyan-400/50">
+        <input id="edit-file-title" type="text" maxlength="80" placeholder="Title" class="w-full rounded-lg border border-[var(--line)] bg-black/25 px-3 py-2.5 text-sm text-white outline-none placeholder:text-slate-600 focus:border-cyan-400/50">
         <div id="edit-file-existing-list" class="mt-3 grid gap-1 text-xs text-slate-400"></div>
         <label id="edit-file-add-zone" for="edit-file-input" class="mt-3 flex cursor-pointer items-center justify-center gap-2 rounded-xl border-2 border-dashed border-white/15 px-4 py-6 text-center text-xs text-slate-500 transition hover:border-cyan-400/40">
           <span>Add more files</span>
@@ -414,7 +414,7 @@ const SHARED_MODALS = String.raw`<div id="maintenance-modal" class="maintenance-
           </label>
           <div id="edit-file-pin-field-wrap" class="hidden">
             <label for="edit-file-pin" class="sr-only">New PIN</label>
-            <input id="edit-file-pin" type="password" minlength="__MIN_PIN_LENGTH__" maxlength="__MAX_PIN_LENGTH__" autocomplete="new-password" placeholder="Leave blank to keep current PIN" class="w-56 rounded-lg border border-white/10 bg-black/25 px-3 py-2 text-sm text-white outline-none placeholder:text-slate-600 focus:border-cyan-400/50">
+            <input id="edit-file-pin" type="password" minlength="__MIN_PIN_LENGTH__" maxlength="__MAX_PIN_LENGTH__" autocomplete="new-password" placeholder="Leave blank to keep current PIN" class="w-56 rounded-lg border border-[var(--line)] bg-black/25 px-3 py-2 text-sm text-white outline-none placeholder:text-slate-600 focus:border-cyan-400/50">
           </div>
           <label class="inline-flex cursor-pointer items-center gap-2 text-sm text-neutral-400">
             <input id="edit-file-burn-toggle" type="checkbox" class="peer sr-only">
@@ -422,7 +422,7 @@ const SHARED_MODALS = String.raw`<div id="maintenance-modal" class="maintenance-
             <span>Open once</span>
           </label>
           <label for="edit-file-ttl-select" class="sr-only">Expiry</label>
-          <select id="edit-file-ttl-select" class="w-auto rounded-lg border border-white/10 bg-black/25 px-3 py-2 text-sm text-slate-300 outline-none focus:border-cyan-400/50">
+          <select id="edit-file-ttl-select" class="w-auto rounded-lg border border-[var(--line)] bg-black/25 px-3 py-2 text-sm text-slate-300 outline-none focus:border-cyan-400/50">
             <option value="">Keep current expiry</option>
             <option value="600">10 minutes from now</option>
             <option value="3600">1 hour from now</option>
@@ -434,7 +434,7 @@ const SHARED_MODALS = String.raw`<div id="maintenance-modal" class="maintenance-
         </div>
         <div class="mt-5 flex flex-col gap-2 sm:flex-row">
           <button type="submit" id="edit-file-submit" class="primary-action flex-1 px-5 py-3 text-sm font-semibold">Save changes</button>
-          <button type="button" data-action="close-edit-file-modal" class="flex-1 rounded-md border border-white/10 px-5 py-3 text-sm text-neutral-300 transition hover:bg-white/5 hover:text-white">Cancel</button>
+          <button type="button" data-action="close-edit-file-modal" class="flex-1 rounded-md border border-[var(--line)] px-5 py-3 text-sm text-neutral-300 transition hover:bg-white/5 hover:text-white">Cancel</button>
         </div>
       </form>
     </div>
@@ -460,12 +460,12 @@ const SHARED_MODALS = String.raw`<div id="maintenance-modal" class="maintenance-
 
       <div class="mt-3 flex items-center gap-2 border border-white/5 bg-[#1d1d1d] p-2 pl-3">
         <input id="qr-link-input" readonly class="min-w-0 flex-1 bg-transparent text-xs text-neutral-500 outline-none">
-        <button type="button" data-action="copy-link" class="rounded-md bg-violet-500 px-3 py-2 text-xs font-semibold text-white transition hover:bg-violet-400">Copy link</button>
+        <button type="button" data-action="copy-link" class="rounded-md bg-[var(--accent)] px-3 py-2 text-xs font-semibold text-white transition hover:bg-[var(--accent-strong)]">Copy link</button>
       </div>
 
       <div class="mt-3 grid grid-cols-2 gap-2">
-        <button type="button" data-action="copy-code" class="w-full rounded-md border border-white/10 px-4 py-3 text-sm text-neutral-300 transition hover:bg-white/5 hover:text-white">Copy code</button>
-        <button id="web-share-button" type="button" data-action="web-share" class="hidden w-full rounded-md border border-white/10 px-4 py-3 text-sm text-neutral-300 transition hover:bg-white/5 hover:text-white">Share…</button>
+        <button type="button" data-action="copy-code" class="w-full rounded-md border border-[var(--line)] px-4 py-3 text-sm text-neutral-300 transition hover:bg-white/5 hover:text-white">Copy code</button>
+        <button id="web-share-button" type="button" data-action="web-share" class="hidden w-full rounded-md border border-[var(--line)] px-4 py-3 text-sm text-neutral-300 transition hover:bg-white/5 hover:text-white">Share…</button>
       </div>
     </div>
   </div>
@@ -497,7 +497,7 @@ function pageAccountContent(): string {
             <div class="flex items-start gap-3"><span class="tier-badge tier-badge-pro shrink-0"><svg viewBox="0 0 24 24" class="h-3.5 w-3.5"><use href="#i-qr-grid"></use></svg></span><div><strong class="text-sm font-semibold text-white">Choose your own link</strong><p class="mt-1 text-xs leading-5 text-slate-500">Pick a memorable code instead of a random one.</p></div></div>
             <div class="flex items-start gap-3"><span class="tier-badge tier-badge-pro shrink-0"><svg viewBox="0 0 24 24" class="h-3.5 w-3.5"><use href="#i-upload"></use></svg></span><div><strong class="text-sm font-semibold text-white">Longer, bigger drops</strong><p class="mt-1 text-xs leading-5 text-slate-500">Higher size caps and drops that stick around longer.</p></div></div>
             <div class="flex items-start gap-3"><span class="tier-badge tier-badge-pro shrink-0"><svg viewBox="0 0 24 24" class="h-3.5 w-3.5"><use href="#i-refresh"></use></svg></span><div><strong class="text-sm font-semibold text-white">My Drops dashboard</strong><p class="mt-1 text-xs leading-5 text-slate-500">See and manage everything you've shared in one place.</p></div></div>
-            <div class="flex items-start gap-3"><span class="tier-badge tier-badge-pro shrink-0"><svg viewBox="0 0 24 24" class="h-3.5 w-3.5"><use href="#i-warning"></use></svg></span><div><strong class="text-sm font-semibold text-white">Extra encryption</strong><p class="mt-1 text-xs leading-5 text-slate-500">Optional client-side encryption on PIN-locked notes.</p></div></div>
+            <div class="flex items-start gap-3"><span class="tier-badge tier-badge-pro shrink-0"><svg viewBox="0 0 24 24" class="h-3.5 w-3.5"><use href="#i-warning"></use></svg></span><div><strong class="text-sm font-semibold text-white">Extra encryption</strong><p class="mt-1 text-xs leading-5 text-slate-500">Optional browser encryption with a separate key in the share link.</p></div></div>
           </div>
 
           <div class="mt-8 border-t border-[var(--line)] pt-6">
@@ -546,12 +546,12 @@ function pageAccountContent(): string {
         </div>
 
         <div class="admin-panel">
-          <div class="admin-panel-head"><h2 class="font-bold text-white">My notes</h2><a href="/text" class="rounded-md border border-[var(--line)] px-3 py-1.5 text-xs font-semibold">+ New note</a></div>
+          <div class="admin-panel-head"><h2 class="font-bold text-white">My text drops</h2><a href="/text" class="rounded-md border border-[var(--line)] px-3 py-1.5 text-xs font-semibold">+ New text drop</a></div>
           <div id="account-notes-list" class="admin-panel-body grid gap-2"></div>
         </div>
 
         <div class="admin-panel">
-          <div class="admin-panel-head"><h2 class="font-bold text-white">My files</h2><a href="/files" class="rounded-md border border-[var(--line)] px-3 py-1.5 text-xs font-semibold">+ New file</a></div>
+          <div class="admin-panel-head"><h2 class="font-bold text-white">My file drops</h2><a href="/files" class="rounded-md border border-[var(--line)] px-3 py-1.5 text-xs font-semibold">+ New file drop</a></div>
           <div id="account-files-list" class="admin-panel-body grid gap-2"></div>
         </div>
 
@@ -862,7 +862,7 @@ function pageHomeContent(): string {
             </section>
           </div>
 
-          <details class="mt-4 border-t border-white/10 pt-4">
+          <details class="mt-4 border-t border-[var(--line)] pt-4">
             <summary class="cursor-pointer text-xs font-semibold uppercase tracking-wider text-slate-500">Have a code?</summary>
             <div class="mt-3">
               ${joinCardFragment()}
@@ -878,18 +878,18 @@ function pageHomeContent(): string {
       <h2 class="text-center text-3xl font-bold text-white sm:text-4xl">Share anything</h2>
       <p class="mx-auto mt-2 max-w-xl text-center text-sm leading-6 text-slate-500">One tool for whatever you need to move between devices.</p>
       <div class="mt-8 grid gap-4 sm:grid-cols-3">
-        <a href="/text" class="glass-panel rounded-2xl p-6 transition hover:border-violet-400/40">
-          <span class="grid h-11 w-11 place-items-center rounded-full bg-[var(--accent-soft)] text-violet-300"><svg viewBox="0 0 24 24" class="h-6 w-6"><use href="#i-logo"></use></svg></span>
+        <a href="/text" class="glass-panel rounded-2xl p-6 transition hover:border-[var(--accent)]">
+          <span class="grid h-11 w-11 place-items-center rounded-full bg-[var(--accent-soft)] text-[var(--accent)]"><svg viewBox="0 0 24 24" class="h-6 w-6"><use href="#i-logo"></use></svg></span>
           <h3 class="mt-4 text-lg font-semibold text-white">Text &amp; notes</h3>
           <p class="mt-2 text-sm leading-6 text-slate-500">Paste a note, lock it with a PIN, send it with a code, link or QR.</p>
         </a>
-        <a href="/files" class="glass-panel rounded-2xl p-6 transition hover:border-violet-400/40">
-          <span class="grid h-11 w-11 place-items-center rounded-full bg-[var(--accent-soft)] text-violet-300"><svg viewBox="0 0 24 24" class="h-6 w-6"><use href="#i-upload"></use></svg></span>
+        <a href="/files" class="glass-panel rounded-2xl p-6 transition hover:border-[var(--accent)]">
+          <span class="grid h-11 w-11 place-items-center rounded-full bg-[var(--accent-soft)] text-[var(--accent)]"><svg viewBox="0 0 24 24" class="h-6 w-6"><use href="#i-upload"></use></svg></span>
           <h3 class="mt-4 text-lg font-semibold text-white">Files &amp; photos</h3>
           <p class="mt-2 text-sm leading-6 text-slate-500">Send one or several files at once. Auto-deletes when the timer runs out.</p>
         </a>
-        <a href="/qr" class="glass-panel rounded-2xl p-6 transition hover:border-violet-400/40">
-          <span class="grid h-11 w-11 place-items-center rounded-full bg-[var(--accent-soft)] text-violet-300"><svg viewBox="0 0 24 24" class="h-6 w-6"><use href="#i-qr-grid"></use></svg></span>
+        <a href="/qr" class="glass-panel rounded-2xl p-6 transition hover:border-[var(--accent)]">
+          <span class="grid h-11 w-11 place-items-center rounded-full bg-[var(--accent-soft)] text-[var(--accent)]"><svg viewBox="0 0 24 24" class="h-6 w-6"><use href="#i-qr-grid"></use></svg></span>
           <h3 class="mt-4 text-lg font-semibold text-white">Links</h3>
           <p class="mt-2 text-sm leading-6 text-slate-500">Turn any link into a scannable QR code, right in the browser.</p>
         </a>
@@ -923,22 +923,22 @@ function pageHomeContent(): string {
       <h2 class="text-center text-3xl font-bold text-white sm:text-4xl">Why AirText</h2>
       <div class="mt-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <div class="glass-panel rounded-2xl p-5 text-center">
-          <span class="mx-auto grid h-11 w-11 place-items-center rounded-full bg-[var(--accent-soft)] text-violet-300"><svg viewBox="0 0 24 24" class="h-6 w-6"><use href="#i-refresh"></use></svg></span>
+          <span class="mx-auto grid h-11 w-11 place-items-center rounded-full bg-[var(--accent-soft)] text-[var(--accent)]"><svg viewBox="0 0 24 24" class="h-6 w-6"><use href="#i-refresh"></use></svg></span>
           <h3 class="mt-3 font-semibold text-white">Auto-deletes</h3>
           <p class="mt-1 text-sm leading-6 text-slate-500">Every drop disappears on its own -- nothing to clean up.</p>
         </div>
         <div class="glass-panel rounded-2xl p-5 text-center">
-          <span class="mx-auto grid h-11 w-11 place-items-center rounded-full bg-[var(--accent-soft)] text-violet-300"><svg viewBox="0 0 24 24" class="h-6 w-6"><use href="#i-warning"></use></svg></span>
+          <span class="mx-auto grid h-11 w-11 place-items-center rounded-full bg-[var(--accent-soft)] text-[var(--accent)]"><svg viewBox="0 0 24 24" class="h-6 w-6"><use href="#i-warning"></use></svg></span>
           <h3 class="mt-3 font-semibold text-white">PIN-locked</h3>
           <p class="mt-1 text-sm leading-6 text-slate-500">Lock anything sensitive so only someone with the PIN can open it.</p>
         </div>
         <div class="glass-panel rounded-2xl p-5 text-center">
-          <span class="mx-auto grid h-11 w-11 place-items-center rounded-full bg-[var(--accent-soft)] text-violet-300"><svg viewBox="0 0 24 24" class="h-6 w-6"><use href="#i-wifi"></use></svg></span>
+          <span class="mx-auto grid h-11 w-11 place-items-center rounded-full bg-[var(--accent-soft)] text-[var(--accent)]"><svg viewBox="0 0 24 24" class="h-6 w-6"><use href="#i-wifi"></use></svg></span>
           <h3 class="mt-3 font-semibold text-white">Any device</h3>
           <p class="mt-1 text-sm leading-6 text-slate-500">Works between phones, laptops and tablets on any network.</p>
         </div>
         <div class="glass-panel rounded-2xl p-5 text-center">
-          <span class="mx-auto grid h-11 w-11 place-items-center rounded-full bg-[var(--accent-soft)] text-violet-300"><svg viewBox="0 0 24 24" class="h-6 w-6"><use href="#i-eye"></use></svg></span>
+          <span class="mx-auto grid h-11 w-11 place-items-center rounded-full bg-[var(--accent-soft)] text-[var(--accent)]"><svg viewBox="0 0 24 24" class="h-6 w-6"><use href="#i-eye"></use></svg></span>
           <h3 class="mt-3 font-semibold text-white">No signup</h3>
           <p class="mt-1 text-sm leading-6 text-slate-500">Start sharing immediately -- an account is never required.</p>
         </div>
@@ -948,7 +948,7 @@ function pageHomeContent(): string {
     <section id="wifi-live-strip" class="mt-16 flex flex-wrap items-center justify-center gap-3 rounded-xl border border-[var(--line)] bg-[var(--panel)] px-6 py-4 text-sm text-slate-400">
       <span class="inline-flex h-2 w-2 shrink-0 rounded-full bg-[var(--accent)]" aria-hidden="true"></span>
       <span><strong id="wifi-live-count" class="text-white">0</strong> <span id="wifi-live-label">drops active on your Wi-Fi right now</span></span>
-      <a href="/nearby" class="text-xs font-semibold text-violet-400">View nearby →</a>
+      <a href="/nearby" class="text-xs font-semibold text-[var(--accent)]">View nearby →</a>
     </section>
 
     <section id="device-grid-section" class="mt-16">
@@ -968,7 +968,7 @@ function pageHomeContent(): string {
       <div class="mx-auto mt-8 grid max-w-3xl gap-3">
         ${faqTeaser}
       </div>
-      <p class="mt-5 text-center text-sm"><a href="/faq" class="font-medium text-violet-400">See all FAQs →</a></p>
+      <p class="mt-5 text-center text-sm"><a href="/faq" class="font-medium text-[var(--accent)]">See all FAQs →</a></p>
     </section>
 
     <section id="final-cta-section" class="mt-16 glass-panel app-shadow rounded-2xl p-8 text-center sm:p-12">
@@ -989,7 +989,7 @@ function createCardFragment(tabPanel?: string): string {
   return String.raw`<section id="create-card"${tabAttr} class="glass-panel app-shadow overflow-hidden rounded-2xl">
       <div class="flex items-center justify-between border-b border-white/[.07] px-5 py-5 sm:px-7">
         <div class="flex items-center gap-4">
-          <span class="grid h-10 w-10 place-items-center rounded-full bg-[var(--accent-soft)] text-violet-300 ring-1 ring-inset ring-[var(--line)]">
+          <span class="grid h-10 w-10 place-items-center rounded-full bg-[var(--accent-soft)] text-[var(--accent)] ring-1 ring-inset ring-[var(--line)]">
             <svg viewBox="0 0 24 24" class="h-7 w-7"><use href="#i-logo"></use></svg>
           </span>
           <div>
@@ -1002,7 +1002,7 @@ function createCardFragment(tabPanel?: string): string {
 
       <form id="create-form" novalidate>
         <div class="px-5 pt-6 sm:px-7">
-          <div class="flex items-center gap-4 border-b border-white/10 pb-4 focus-within:border-cyan-400/40">
+          <div class="flex items-center gap-4 border-b border-[var(--line)] pb-4 focus-within:border-cyan-400/40">
             <label for="share-title" class="sr-only">Title</label>
             <input
               id="share-title"
@@ -1049,7 +1049,7 @@ function createCardFragment(tabPanel?: string): string {
                     maxlength="__MAX_PIN_LENGTH__"
                     autocomplete="new-password"
                     placeholder="Secret PIN"
-                    class="w-40 rounded-lg border border-white/10 bg-black/25 px-3 py-2 pr-9 text-sm text-white outline-none placeholder:text-slate-600 focus:border-cyan-400/50"
+                    class="w-40 rounded-lg border border-[var(--line)] bg-black/25 px-3 py-2 pr-9 text-sm text-white outline-none placeholder:text-slate-600 focus:border-cyan-400/50"
                   >
                   <button type="button" data-action="toggle-create-pin" class="absolute inset-y-0 right-0 grid w-9 place-items-center text-neutral-600 transition hover:text-white" aria-label="Show or hide PIN">
                     <svg viewBox="0 0 24 24" class="h-4 w-4"><use href="#i-eye"></use></svg>
@@ -1072,12 +1072,12 @@ function createCardFragment(tabPanel?: string): string {
                   autocomplete="off"
                   autocapitalize="characters"
                   placeholder="Custom code (optional)"
-                  class="w-44 rounded-lg border border-white/10 bg-black/25 px-3 py-2 text-sm text-white outline-none placeholder:text-slate-600 focus:border-cyan-400/50"
+                  class="w-44 rounded-lg border border-[var(--line)] bg-black/25 px-3 py-2 text-sm text-white outline-none placeholder:text-slate-600 focus:border-cyan-400/50"
                 >
               </div>
 
               <label for="create-ttl-select" class="sr-only">Disappears in</label>
-              <select id="create-ttl-select" class="w-auto rounded-lg border border-white/10 bg-black/25 px-3 py-2 text-sm text-slate-300 outline-none focus:border-cyan-400/50">
+              <select id="create-ttl-select" class="w-auto rounded-lg border border-[var(--line)] bg-black/25 px-3 py-2 text-sm text-slate-300 outline-none focus:border-cyan-400/50">
                 <option value="">Disappears in default time</option>
                 <option value="600">Disappears in 10 minutes</option>
                 <option value="3600">Disappears in 1 hour</option>
@@ -1098,7 +1098,7 @@ function createCardFragment(tabPanel?: string): string {
             </button>
           </div>
         </div>
-      </form>
+      <label id="encryption-option" class="encryption-option" hidden><input id="encrypt-note-toggle" type="checkbox"><span><strong>Encrypt in this browser</strong><small>Share the complete link, including its key. The service cannot recover a lost key. Encrypted drops stay off Nearby.</small></span></label></form>
     </section>`;
 }
 
@@ -1124,7 +1124,7 @@ function notesSectionFragment(tabPanel?: string): string {
           <input id="notes-search" class="notes-search" type="search" placeholder="Search nearby drops…" autocomplete="off">
           <label class="sr-only" for="notes-filter">Filter notes</label>
           <select id="notes-filter" class="filter-select">
-            <option value="all">All notes</option>
+            <option value="all">All text drops</option>
             <option value="mine">Mine</option>
             <option value="received">Received</option>
             <option value="open">Open</option>
@@ -1134,12 +1134,12 @@ function notesSectionFragment(tabPanel?: string): string {
 
         <div class="p-4 sm:p-5">
           <div id="board-loading" class="py-12 text-center">
-            <span class="mx-auto block h-6 w-6 animate-spin rounded-full border-2 border-white/10 border-t-violet-400"></span>
+            <span class="mx-auto block h-6 w-6 animate-spin rounded-full border-2 border-[var(--line)] border-t-violet-400"></span>
           </div>
 
           <div id="board-empty" class="hidden py-12 text-center">
             <p id="available-empty-text" class="text-sm text-neutral-500">No shared text yet.</p>
-            <a href="/text" class="mt-3 inline-block text-sm font-medium text-violet-400 transition hover:text-violet-300">Create the first one</a>
+            <a href="/text" class="mt-3 inline-block text-sm font-medium text-[var(--accent)] transition hover:text-[var(--accent)]">Create the first one</a>
           </div>
 
           <div id="board-list" class="hidden grid-cols-1 gap-2"></div>
@@ -1156,17 +1156,17 @@ function joinCardFragment(tabPanel?: string): string {
           <input
             id="join-code"
             type="text"
-            maxlength="12"
+            maxlength="2048"
             autocomplete="off"
             autocapitalize="characters"
             spellcheck="false"
             placeholder="ABC123"
-            class="w-full rounded-xl border border-white/10 bg-black/25 px-4 py-3 text-center font-mono text-lg font-semibold uppercase tracking-[.22em] text-white outline-none placeholder:tracking-[.16em] placeholder:text-slate-700 focus:border-cyan-400/50"
+            class="w-full rounded-xl border border-[var(--line)] bg-black/25 px-4 py-3 text-center font-mono text-lg font-semibold uppercase tracking-[.22em] text-white outline-none placeholder:tracking-[.16em] placeholder:text-slate-700 focus:border-cyan-400/50"
           >
-          <button id="open-code-button-text" type="submit" class="w-full rounded-xl border border-white/10 px-4 py-3 text-sm font-medium text-slate-200 transition hover:border-violet-400/40 hover:bg-violet-500/10 hover:text-white">
+          <button id="open-code-button-text" type="submit" class="w-full rounded-xl border border-[var(--line)] px-4 py-3 text-sm font-medium text-slate-200 transition hover:border-[var(--accent)] hover:bg-[var(--accent-soft)] hover:text-white">
             Receive share
           </button>
-        </form>
+        <button id="receive-paste" type="button" class="action-btn w-full">Paste a code or share link</button></form>
         <button id="scan-qr-text" type="button" data-action="open-scanner" class="mt-3 w-full rounded-md px-4 py-2.5 text-sm text-neutral-500 transition hover:bg-white/5 hover:text-neutral-200">
           Scan QR instead
         </button>
@@ -1195,7 +1195,7 @@ function filesUploadFragmentInner(): string {
         <div class="mt-4 flex flex-col gap-4">
           <div class="flex flex-wrap items-center gap-3">
             <label for="file-title" class="sr-only">Title (optional)</label>
-            <input id="file-title" name="title" type="text" maxlength="80" autocomplete="off" placeholder="Title (optional)" class="min-w-0 flex-1 rounded-lg border border-white/10 bg-black/25 px-3 py-2.5 text-sm text-white outline-none placeholder:text-slate-600 focus:border-cyan-400/50">
+            <input id="file-title" name="title" type="text" maxlength="80" autocomplete="off" placeholder="Title (optional)" class="min-w-0 flex-1 rounded-lg border border-[var(--line)] bg-black/25 px-3 py-2.5 text-sm text-white outline-none placeholder:text-slate-600 focus:border-cyan-400/50">
             <label id="file-lock-control" class="inline-flex cursor-pointer items-center gap-2 text-sm text-neutral-400">
               <input id="file-lock-toggle" type="checkbox" class="peer sr-only">
               <span class="relative h-5 w-9 rounded-full bg-slate-700 transition peer-checked:bg-[var(--accent)] after:absolute after:left-0.5 after:top-0.5 after:h-4 after:w-4 after:rounded-full after:bg-white after:shadow after:transition peer-checked:after:translate-x-4"></span>
@@ -1203,7 +1203,7 @@ function filesUploadFragmentInner(): string {
             </label>
             <div id="file-pin-field-wrap" class="hidden">
               <label for="file-pin" class="sr-only">Secret PIN</label>
-              <input id="file-pin" type="password" minlength="__MIN_PIN_LENGTH__" maxlength="__MAX_PIN_LENGTH__" autocomplete="new-password" placeholder="Secret PIN" class="w-32 rounded-lg border border-white/10 bg-black/25 px-3 py-2 text-sm text-white outline-none placeholder:text-slate-600 focus:border-cyan-400/50">
+              <input id="file-pin" type="password" minlength="__MIN_PIN_LENGTH__" maxlength="__MAX_PIN_LENGTH__" autocomplete="new-password" placeholder="Secret PIN" class="w-32 rounded-lg border border-[var(--line)] bg-black/25 px-3 py-2 text-sm text-white outline-none placeholder:text-slate-600 focus:border-cyan-400/50">
             </div>
             <label id="file-burn-control" class="inline-flex cursor-pointer items-center gap-2 text-sm text-neutral-400">
               <input id="file-burn-toggle" type="checkbox" class="peer sr-only">
@@ -1212,10 +1212,10 @@ function filesUploadFragmentInner(): string {
             </label>
             <div id="file-custom-code-field-wrap" class="hidden">
               <label for="file-custom-code-input" class="sr-only">Custom share code</label>
-              <input id="file-custom-code-input" type="text" maxlength="12" autocomplete="off" autocapitalize="characters" placeholder="Custom code (optional)" class="w-40 rounded-lg border border-white/10 bg-black/25 px-3 py-2 text-sm text-white outline-none placeholder:text-slate-600 focus:border-cyan-400/50">
+              <input id="file-custom-code-input" type="text" maxlength="12" autocomplete="off" autocapitalize="characters" placeholder="Custom code (optional)" class="w-40 rounded-lg border border-[var(--line)] bg-black/25 px-3 py-2 text-sm text-white outline-none placeholder:text-slate-600 focus:border-cyan-400/50">
             </div>
             <label for="file-ttl-select" class="sr-only">Disappears in</label>
-            <select id="file-ttl-select" class="w-auto rounded-lg border border-white/10 bg-black/25 px-3 py-2 text-sm text-slate-300 outline-none focus:border-cyan-400/50">
+            <select id="file-ttl-select" class="w-auto rounded-lg border border-[var(--line)] bg-black/25 px-3 py-2 text-sm text-slate-300 outline-none focus:border-cyan-400/50">
               <option value="">Disappears in default time</option>
               <option value="600">Disappears in 10 minutes</option>
               <option value="3600">Disappears in 1 hour</option>
@@ -1229,7 +1229,7 @@ function filesUploadFragmentInner(): string {
             <span data-button-label id="files-upload-button-text">Upload file</span>
           </button>
         </div>
-      </form>
+      <p id="upload-progress" class="upload-progress" role="status" aria-live="polite" hidden></p></form>
 
       <p id="files-privacy-note" class="px-5 pb-5 text-xs leading-5 text-neutral-600 sm:px-7">Only titles appear in the nearby list. Use a PIN for private files.</p>`;
 }
@@ -1293,28 +1293,21 @@ function pageFilesContent(): string {
 
 function pageNearbyContent(): string {
   return String.raw`<div class="mx-auto max-w-4xl">
-      <div class="mb-8">
-        <p class="hero-kicker">Nearby</p>
-        <h1 class="mt-2 text-3xl font-bold text-white sm:text-4xl">What's on your Wi-Fi right now</h1>
-        <p class="mt-2 text-sm leading-6 text-slate-500">Anyone on this Wi-Fi can see what's listed below. Use a PIN for anything private.</p>
+    <header class="nearby-heading">
+      <div><p class="hero-kicker">Nearby drops</p><h1 class="mt-2 text-3xl font-bold sm:text-4xl">A shared space for this connection</h1>
+      <p class="feature-hint">Devices using the same public IP can see this board. Shared gateways and VPNs can affect who appears nearby. Use a PIN for private drops.</p></div>
+      <div class="note-actions"><a href="/text" class="action-btn primary-action">Share text</a><a href="/files" class="action-btn">Share files</a></div>
+    </header>
+    <section class="nearby-panel" aria-label="Nearby drops">
+      <div class="nearby-status"><span id="nearby-total" role="status">Loading nearby drops…</span><span class="feature-hint">Refreshes every 10 seconds</span><button type="button" class="action-btn" data-action="refresh-items">Refresh</button></div>
+      <label class="sr-only" for="nearby-search">Search nearby drops</label><input id="nearby-search" class="input-field" type="search" placeholder="Search by title or code…" autocomplete="off">
+      <div class="nearby-filters" role="group" aria-label="Filter drops">
+        <button type="button" data-nearby-filter="all" aria-pressed="true">All drops</button><button type="button" data-nearby-filter="note" aria-pressed="false">Text</button><button type="button" data-nearby-filter="file" aria-pressed="false">Files</button><button type="button" data-nearby-filter="mine" aria-pressed="false">Mine</button><button type="button" data-nearby-filter="open" aria-pressed="false">Open</button><button type="button" data-nearby-filter="locked" aria-pressed="false">PIN locked</button>
       </div>
-
-      <div class="mb-3 flex items-center justify-between gap-4">
-        <h2 class="text-lg font-semibold text-white">Text</h2>
-        <a href="/text" class="rounded-md border border-[var(--line)] px-3 py-1.5 text-xs font-semibold text-slate-300 transition hover:border-violet-400/40 hover:text-white">Share text →</a>
-      </div>
-      ${notesSectionFragment()}
-
-      <div class="mb-3 mt-8 flex items-center justify-between gap-4">
-        <h2 class="text-lg font-semibold text-white">Files</h2>
-        <a href="/files" class="rounded-md border border-[var(--line)] px-3 py-1.5 text-xs font-semibold text-slate-300 transition hover:border-violet-400/40 hover:text-white">Share files →</a>
-      </div>
-      <section id="files-board-section" class="glass-panel overflow-hidden rounded-2xl">
-        <div class="px-5 py-5 sm:px-7">
-          ${filesBoardFragmentInner()}
-        </div>
-      </section>
-    </div>`;
+      <div id="nearby-drop-list" class="nearby-list"></div>
+    </section>
+    <div class="hidden-force" aria-hidden="true">${notesSectionFragment()}<section id="files-board-section">${filesBoardFragmentInner()}</section></div>
+  </div>`;
 }
 
 function pageReceiveContent(): string {
@@ -1325,7 +1318,7 @@ function pageReceiveContent(): string {
         <p class="mt-2 text-sm leading-6 text-slate-500">Enter the code you were given, or scan the QR from the sender's device. If it's locked, you'll be asked for the PIN before it opens.</p>
       </div>
       ${joinCardFragment()}
-      <p class="mt-4 text-center text-xs leading-5 text-neutral-600">Don't have a code? Check what's already <a href="/nearby" class="text-violet-400">nearby on this Wi-Fi</a> instead.</p>
+      <p class="mt-4 text-center text-xs leading-5 text-neutral-600">Don't have a code? Check what's already <a href="/nearby" class="text-[var(--accent)]">nearby on this Wi-Fi</a> instead.</p>
     </div>`;
 }
 
@@ -1365,25 +1358,25 @@ function pageGuideContent(): string {
       <h2 class="mt-10 text-xl font-bold text-white">Sending text vs. files</h2>
       <div class="mt-4 grid gap-4 sm:grid-cols-2">
         <div class="glass-panel rounded-2xl p-5">
-          <h3 class="font-semibold text-white">Text (<a href="/text" class="text-violet-400">/text</a>)</h3>
+          <h3 class="font-semibold text-white">Text (<a href="/text" class="text-[var(--accent)]">/text</a>)</h3>
           <p class="mt-2 text-sm leading-6 text-slate-500">Paste or type directly into the box -- no file needed. Good for codes, notes, addresses, or anything you'd otherwise copy-paste over chat.</p>
         </div>
         <div class="glass-panel rounded-2xl p-5">
-          <h3 class="font-semibold text-white">Files (<a href="/files" class="text-violet-400">/files</a>)</h3>
+          <h3 class="font-semibold text-white">Files (<a href="/files" class="text-[var(--accent)]">/files</a>)</h3>
           <p class="mt-2 text-sm leading-6 text-slate-500">Upload one or several files at once, up to your plan's size limit. Good for photos, documents, or anything that isn't plain text.</p>
         </div>
       </div>
 
       <h2 class="mt-10 text-xl font-bold text-white">A few tips</h2>
       <ul class="mt-4 grid gap-3 text-sm leading-6 text-slate-500">
-        <li class="flex gap-2"><span class="text-[var(--accent)]">•</span><span><strong class="text-white">PIN</strong> -- lock a drop so only someone with the PIN can open it. Anyone can still see it listed as "Locked" on <a href="/nearby" class="text-violet-400">Nearby</a>, but not its contents.</span></li>
-        <li class="flex gap-2"><span class="text-[var(--accent)]">•</span><span><strong class="text-white">Open once</strong> -- the drop deletes itself the instant someone else opens it. Good for anything you only want seen a single time.</span></li>
+        <li class="flex gap-2"><span class="text-[var(--accent)]">•</span><span><strong class="text-white">PIN</strong> -- lock a drop so only someone with the PIN can open it. Anyone can still see it listed as "Locked" on <a href="/nearby" class="text-[var(--accent)]">Nearby</a>, but not its contents.</span></li>
+        <li class="flex gap-2"><span class="text-[var(--accent)]">•</span><span><strong class="text-white">Open once</strong> -- the drop deletes itself after its first recipient read (each file attachment permits one recipient download). Good for anything you only want seen a single time.</span></li>
         <li class="flex gap-2"><span class="text-[var(--accent)]">•</span><span><strong class="text-white">Custom code</strong> -- Pro and Member accounts can pick their own short code instead of a random one, making it easier to say out loud or remember.</span></li>
         <li class="flex gap-2"><span class="text-[var(--accent)]">•</span><span><strong class="text-white">Expiry</strong> -- choose how long a drop sticks around (10 minutes, 1 hour, 1 day) instead of using the default.</span></li>
-        <li class="flex gap-2"><span class="text-[var(--accent)]">•</span><span><strong class="text-white">Nearby</strong> -- anyone on the same Wi-Fi can see what's been shared without a code, so use a PIN for anything you don't want visible to others on that network.</span></li>
+        <li class="flex gap-2"><span class="text-[var(--accent)]">•</span><span><strong class="text-white">Nearby</strong> -- devices sharing your public IP can see what's been shared without a code, so use a PIN for anything you don't want visible to others on that network.</span></li>
       </ul>
 
-      <p class="mt-8 text-sm leading-6 text-slate-500">Still have questions? Read the <a href="/faq" class="text-violet-400">FAQ</a> or <a href="/about" class="text-violet-400">learn more about AirText</a>.</p>
+      <p class="mt-8 text-sm leading-6 text-slate-500">Still have questions? Read the <a href="/faq" class="text-[var(--accent)]">FAQ</a> or <a href="/about" class="text-[var(--accent)]">learn more about AirText</a>.</p>
     </div>`;
 }
 
@@ -1409,10 +1402,10 @@ const FAQ_ENTRIES: Array<{ question: string; answer: string }> = [
   { question: "Is AirText free?", answer: "Yes. Anyone can send text or files without paying and without creating an account." },
   { question: "Do I need an account?", answer: "No. Anonymous sharing works fully without one. Signing in (invite-only) adds a My Drops dashboard, custom links on some plans, and higher limits." },
   { question: "How long do drops last?", answer: "Every drop shows a \"disappears in\" countdown. The exact duration is set by the site admin and can differ for text versus files." },
-  { question: "What happens after a drop expires?", answer: "It is deleted from storage automatically -- there is no way to recover an expired drop, by you or anyone else." },
-  { question: "Is my content encrypted or private?", answer: "PINs and account passwords are never stored in plain text -- they're one-way hashed. For PIN-locked notes, some plans additionally encrypt the text in your browser before it's ever sent. See the Privacy policy for details." },
+  { question: "What happens after a drop expires?", answer: "It becomes unavailable immediately. Scheduled cleanup removes stored data, with retries after storage failures. Operational backups may retain older data temporarily." },
+  { question: "Is my content encrypted or private?", answer: "PINs and account passwords are never stored in plain text -- they're one-way hashed. On enabled plans, choose browser encryption to keep the text encrypted on the server. Keep the complete share link; PINs and encryption keys are separate. See the Privacy policy for details." },
   { question: "What's a PIN for?", answer: "\"Lock it\" with a PIN so only someone who knows the PIN can open your drop, even if they have the link or code." },
-  { question: "What's \"Open once\" for?", answer: "An optional setting that deletes the drop the moment someone else opens it for the first time -- useful for sharing something sensitive exactly one time." },
+  { question: "What's \"Open once\" for?", answer: "An optional setting that deletes the drop after its first recipient read; each file attachment allows one recipient download -- useful for sharing something sensitive exactly one time." },
   { question: "Are there file size limits?", answer: "Yes. The site admin sets a per-file and a per-batch size limit, shown on the upload page before you send. Some signed-in plans allow larger uploads." },
   { question: "Can I choose my own link?", answer: "If your plan allows it, yes -- pick your own short code instead of a random one when creating a drop." },
   { question: "What's the difference between anonymous and signed-in drops?", answer: "Anonymous drops show no owner information and can only be managed from the browser that created them. Signed-in drops appear in your My Drops dashboard and can be managed from any device." },
@@ -1465,13 +1458,13 @@ function pagePrivacyContent(): string {
         <p>PINs on locked drops and account passwords are never stored in plain text. Each is combined with a random per-item salt and passed through an HMAC-SHA256 one-way hash -- we cannot read your PIN or password back out, only verify a match.</p>
 
         <h2 class="text-base font-semibold text-white">Client-side encryption</h2>
-        <p>For PIN-locked notes, when enabled for your plan, encryption must be explicitly enabled when creating a drop. Standard PIN protection controls access but does not encrypt stored text. Titles and expiry metadata are visible to the service.</p>
+        <p>For PIN-locked notes, when enabled for your plan, choose "Encrypt in this browser" to encrypt text with AES-256-GCM and a random key. The full share link carries the key in its URL fragment; the key is not sent in HTTP requests. A share code alone cannot decrypt the text. PIN access control is separate. Titles and expiry metadata remain visible to the service. Losing the key means losing access; owner and admin accounts cannot recover it. Keys are remembered only for the current browser tab session. The service delivers the browser application, so this does not protect against a compromised service changing that application.</p>
 
         <h2 class="text-base font-semibold text-white">IP addresses and analytics</h2>
         <p>We keep basic, privacy-safe usage analytics (device type, access method, feature used) to understand how AirText is used. Your IP address is never stored raw -- it is combined with the date and one-way hashed before anything is written, and that hash cannot be reversed back into an IP address. The same hashing applies to the "network" grouping used to show what's nearby on your Wi-Fi.</p>
 
         <h2 class="text-base font-semibold text-white">Automatic deletion</h2>
-        <p>Every drop has an expiry time shown as a countdown. Once it passes, the drop (and any uploaded files) is deleted automatically and is not recoverable. Drops can also be set to delete themselves immediately after they're opened once ("Open once"), or deleted manually by their owner beforehand.</p>
+        <p>Every drop has an expiry time shown as a countdown. Once it passes, the drop becomes unavailable. Stored data is removed by scheduled cleanup; storage failures are retried. Audit logs keep metadata for 30 days and exclude note bodies. Operational backups may retain older data temporarily. Drops can also be set to delete themselves immediately after they're opened once ("Open once"), or deleted manually by their owner beforehand.</p>
 
         <h2 class="text-base font-semibold text-white">Cookies</h2>
         <p>Signing in to a Pro/Member account or the admin panel sets one HTTP-only, secure session cookie used only to keep you signed in. We do not use cookies for advertising or cross-site tracking, and we do not load any third-party trackers, ad scripts or analytics from other companies -- everything AirText needs (including the QR and scanner libraries) is served from our own domain.</p>
@@ -1526,10 +1519,10 @@ function pageLoginContent(): string {
           <p id="login-error" class="hidden text-sm text-red-400"></p>
         </form>
         <p id="login-admin-hint" class="mt-4 hidden rounded-lg border border-[var(--line)] bg-black/20 p-3 text-sm text-slate-300">
-          Your account has admin access -- <a href="/admin" class="font-semibold text-violet-400">open the admin panel →</a>
+          Your account has admin access -- <a href="/admin" class="font-semibold text-[var(--accent)]">open the admin panel →</a>
         </p>
         <p class="mt-6 border-t border-[var(--line)] pt-5 text-sm leading-6 text-slate-500">
-          Don't have an account? Account creation is invite-only -- request one from your <a href="/account" class="text-violet-400">account page</a>.
+          Don't have an account? Account creation is invite-only -- request one from your <a href="/account" class="text-[var(--accent)]">account page</a>.
         </p>
       </section>
     </div>`;
@@ -1679,19 +1672,19 @@ const APP_SHELL = `<!doctype html>
 
 </head>
 
-<body class="subtle-grid font-sans antialiased selection:bg-violet-500/30 selection:text-white">
+<body class="subtle-grid font-sans antialiased selection:bg-[var(--accent)]/30 selection:text-white">
   ${ICON_SPRITE}
   <div id="public-app">
   ${SITE_HEADER}
 
   <main class="mx-auto max-w-6xl px-5 py-8 pb-24 sm:px-7 sm:py-12 sm:pb-12">
     __MAIN_CONTENT__
+    __RECENT_DROPS__
   </main>
 
   ${SITE_FOOTER}
-  </div>
-
   ${MOBILE_BOTTOM_BAR}
+  </div>
 
   ${SIDE_DRAWER}
 
@@ -1766,6 +1759,7 @@ export function renderPage(settings: SiteSettings, options: RenderPageOptions): 
     // contains __MAX_TITLE_LENGTH__ / __MAX_TEXT_LENGTH__ / pin-length
     // tokens that still need to be replaced afterwards.
     "__MAIN_CONTENT__": getMainContentForPath(options.canonicalPath),
+    "__RECENT_DROPS__": ["/", "/text", "/files"].includes(options.canonicalPath) ? '<section id="recent-drops" class="mx-auto mt-8 max-w-4xl" hidden></section>' : "",
     "__NAV_AUTH_SLOT__": renderNavAuthSlot(options.viewer),
     "__APP_NAME__": escapeHtml(settings.appName),
     "__SEO_TITLE__": escapeHtml(seoTitle),

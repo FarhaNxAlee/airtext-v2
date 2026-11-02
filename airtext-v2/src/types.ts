@@ -1,3 +1,1 @@
-export interface Env extends WorkerBindings {
-  ENVIRONMENT?: string;
-}
+export interface Env extends WorkerBindings {}

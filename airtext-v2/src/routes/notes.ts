@@ -37,11 +37,15 @@ export interface NoteRow {
   userId: string | null;
   sharedBy: SharedBy | null;
   burnAfterRead: boolean;
+  encrypted: boolean;
+  encryptionIv: string | null;
 }
 
 interface RawNoteRow {
   id: string;
   burn_after_read?: number;
+  body_encrypted?: number;
+  encryption_iv?: string | null;
   room_id?: string;
   title?: string;
   body?: string;
@@ -81,6 +85,8 @@ function rowToNote(row: RawNoteRow | null | undefined): NoteRow | null {
       ? { name: String(row.shared_by_name), role: String(row.shared_by_role || ""), rank: Number(row.shared_by_rank) }
       : null,
     burnAfterRead: Boolean(row.burn_after_read),
+    encrypted: Boolean(row.body_encrypted),
+    encryptionIv: row.encryption_iv || null,
   };
 }
 
@@ -104,7 +110,7 @@ async function getNoteByCode(env: Env, rawCode: string): Promise<NoteRow | null>
 }
 
 async function addNoteToRoom(env: Env, note: NoteRow, roomId: string, source: "mine" | "received"): Promise<void> {
-  if (!note || isExpired(note) || note.burnAfterRead) return;
+  if (!note || isExpired(note) || (note.burnAfterRead || note.encrypted)) return;
   await env.DB.prepare(
     "INSERT OR IGNORE INTO network_notes (room_id, note_id, source, added_at) VALUES (?, ?, ?, ?)",
   )
@@ -117,7 +123,7 @@ async function addNoteToRoom(env: Env, note: NoteRow, roomId: string, source: "m
  *  already has this note, so re-sharing after the visibility window has
  *  elapsed (see networkVisibilityTtlSeconds) actually makes it reappear. */
 async function publishNoteToRoom(env: Env, note: NoteRow, roomId: string, source: "mine" | "received"): Promise<void> {
-  if (!note || isExpired(note) || note.burnAfterRead) return;
+  if (!note || isExpired(note) || (note.burnAfterRead || note.encrypted)) return;
   await env.DB.prepare(
     `INSERT INTO network_notes (room_id, note_id, source, added_at) VALUES (?, ?, ?, ?)
      ON CONFLICT(room_id, note_id) DO UPDATE SET added_at = excluded.added_at, source = excluded.source`,
@@ -160,6 +166,8 @@ function publicItemPayload(note: NoteRow, includeText: boolean) {
       createdAt: Number(note.createdAt),
       expiresAt: Number(note.expiresAt),
       burnAfterRead: Boolean(note.burnAfterRead),
+      encrypted: note.encrypted,
+      ...(note.encrypted ? { encryptionVersion: 1, encryptionIv: note.encryptionIv } : {}),
       ...(note.sharedBy ? { sharedBy: note.sharedBy } : {}),
       ...(includeText ? { text: note.text } : {}),
     },
@@ -167,6 +175,9 @@ function publicItemPayload(note: NoteRow, includeText: boolean) {
 }
 
 export interface NoteEditPatch {
+  encrypted?: boolean;
+  encryptionIv?: string;
+  encryptionVersion?: number;
   title?: string;
   text?: string;
   locked?: boolean;
@@ -196,11 +207,20 @@ async function applyNoteEdit(
     }
   }
 
+  if (patch.text === undefined && (patch.encrypted !== undefined || patch.encryptionIv !== undefined || patch.encryptionVersion !== undefined)) {
+    return {ok:false,response:jsonError("Encryption changes require a complete new encrypted body.",400,"INVALID_ENCRYPTION")};
+  }
+  const encrypted = patch.encrypted === undefined ? note.encrypted : patch.encrypted === true;
+  if (note.encrypted && !encrypted) return {ok:false,response:jsonError("Encrypted drops cannot be downgraded to plaintext.",400,"ENCRYPTION_REQUIRED")};
+  if (patch.text !== undefined && note.encrypted && patch.encrypted !== true) return {ok:false,response:jsonError("Encrypt the updated text before saving.",400,"ENCRYPTION_REQUIRED")};
+  const encryptionIv = patch.encryptionIv === undefined ? note.encryptionIv : patch.encryptionIv;
+  if (encrypted && patch.text !== undefined && (!validCiphertext(patch.text, encryptionIv, patch.encryptionVersion) || encryptionIv === note.encryptionIv)) return {ok:false,response:jsonError("Invalid or reused encryption envelope.",400,"INVALID_ENCRYPTION")};
+  if (encrypted && !note.encrypted && !limits.allowClientEncryption) return {ok:false,response:jsonError("Browser encryption requires an enabled account plan.",403,"ENCRYPTION_DISABLED")};
   let text = note.text;
   if (patch.text !== undefined) {
     text = normalizeText(patch.text);
     if (!text) return { ok: false, response: jsonError("Please enter text to share.", 400, "TEXT_REQUIRED") };
-    if (text.length > limits.maxTextLength) {
+    if (text.length > (encrypted ? limits.maxTextLength * 4 + 100 : limits.maxTextLength)) {
       return { ok: false, response: jsonError(`Text must be ${limits.maxTextLength.toLocaleString()} characters or fewer.`, 400, "TEXT_TOO_LONG") };
     }
   }
@@ -249,13 +269,13 @@ async function applyNoteEdit(
   }
 
   await env.DB.prepare(
-    "UPDATE notes SET title = ?, body = ?, locked = ?, pin_salt = ?, pin_hash = ?, burn_after_read = ?, expires_at = ? WHERE id = ?",
+    "UPDATE notes SET title = ?, body = ?, locked = ?, pin_salt = ?, pin_hash = ?, burn_after_read = ?, expires_at = ?, body_encrypted = ?, encryption_iv = ? WHERE id = ?",
   )
-    .bind(title, text, locked ? 1 : 0, pinSalt, pinHash, burnAfterRead ? 1 : 0, expiresAt, note.id)
+    .bind(title, text, locked ? 1 : 0, pinSalt, pinHash, burnAfterRead ? 1 : 0, expiresAt, encrypted ? 1 : 0, encryptionIv, note.id)
     .run();
 
-  if (burnAfterRead) await env.DB.prepare("DELETE FROM network_notes WHERE note_id = ?").bind(note.id).run();
-  return { ok: true, note: { ...note, title, text, locked, pinSalt, pinHash, burnAfterRead, expiresAt } };
+  if (burnAfterRead || encrypted) await env.DB.prepare("DELETE FROM network_notes WHERE note_id = ?").bind(note.id).run();
+  return { ok: true, note: { ...note, title, text, locked, pinSalt, pinHash, burnAfterRead, expiresAt, encrypted, encryptionIv } };
 }
 
 async function verifyPin(request: Request, env: Env, note: NoteRow): Promise<{ ok: true } | { ok: false; response: Response }> {
@@ -300,7 +320,7 @@ notesRoutes.get("/api/local/items", async (c) => {
      FROM network_notes nn
      JOIN notes n ON n.id = nn.note_id
      ${SHARED_BY_JOIN}
-     WHERE nn.room_id = ? AND n.expires_at > ? AND n.burn_after_read = 0 AND nn.added_at > ?
+     WHERE nn.room_id = ? AND n.expires_at > ? AND n.burn_after_read = 0 AND n.body_encrypted = 0 AND nn.added_at > ?
      ORDER BY nn.added_at DESC
      LIMIT ?`,
   )
@@ -345,7 +365,7 @@ notesRoutes.get("/api/local/count", async (c) => {
   const now = Date.now();
   const visibilityCutoff = now - settings.networkVisibilityTtlSeconds * 1000;
   const noteCountRow = await env.DB.prepare(
-    `SELECT COUNT(*) AS count FROM network_notes nn JOIN notes n ON n.id = nn.note_id WHERE nn.room_id = ? AND n.expires_at > ? AND n.burn_after_read = 0 AND nn.added_at > ?`,
+    `SELECT COUNT(*) AS count FROM network_notes nn JOIN notes n ON n.id = nn.note_id WHERE nn.room_id = ? AND n.expires_at > ? AND n.burn_after_read = 0 AND n.body_encrypted = 0 AND nn.added_at > ?`,
   )
     .bind(roomId, now, visibilityCutoff)
     .first<{ count: number }>();
@@ -371,14 +391,17 @@ notesRoutes.post("/api/items", async (c) => {
 
   const body = await readJsonBody<{
     title?: string; text?: string; locked?: boolean; pin?: string; customCode?: string; burnAfterRead?: boolean;
-    ttlSeconds?: number;
+    ttlSeconds?: number; encrypted?: boolean; encryptionIv?: string; encryptionVersion?: number;
   }>(
     c.req.raw,
-    Math.max(24_000, limits.maxTextLength + 2_000),
+    Math.max(24_000, limits.maxTextLength * 4 + 2_000),
   );
   if (!body.ok) return body.response;
   const title = normalizeTitle(body.data.title);
   const text = normalizeText(body.data.text);
+  const encrypted = body.data.encrypted === true;
+  if (encrypted && !limits.allowClientEncryption) return jsonError("Browser encryption requires an enabled account plan.", 403, "ENCRYPTION_DISABLED");
+  if (encrypted && !validCiphertext(text, body.data.encryptionIv, body.data.encryptionVersion)) return jsonError("Invalid encryption envelope.", 400, "INVALID_ENCRYPTION");
   const wantsBurnAfterRead = Boolean(body.data.burnAfterRead);
   const wantsLock = settings.pinEnabled && Boolean(body.data.locked);
   const pin = typeof body.data.pin === "string" ? body.data.pin.trim() : "";
@@ -388,7 +411,7 @@ notesRoutes.post("/api/items", async (c) => {
     return jsonError(`Title must be ${settings.maxTitleLength} characters or fewer.`, 400, "TITLE_TOO_LONG");
   }
   if (!text) return jsonError("Please enter text to share.", 400, "TEXT_REQUIRED");
-  if (text.length > limits.maxTextLength) {
+  if (text.length > (encrypted ? limits.maxTextLength * 4 + 100 : limits.maxTextLength)) {
     return jsonError(`Text must be ${limits.maxTextLength.toLocaleString()} characters or fewer.`, 400, "TEXT_TOO_LONG");
   }
   if (wantsLock && (pin.length < CONFIG.MIN_PIN_LENGTH || pin.length > CONFIG.MAX_PIN_LENGTH)) {
@@ -447,13 +470,13 @@ notesRoutes.post("/api/items", async (c) => {
     env.DB.prepare(
       `INSERT INTO notes (
         id, room_id, title, body, locked, pin_salt, pin_hash, code,
-        delete_token_hash, created_at, expires_at, user_id, burn_after_read
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        delete_token_hash, created_at, expires_at, user_id, burn_after_read, body_encrypted, encryption_iv
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).bind(
       id, roomId, title, text, wantsLock ? 1 : 0, pinSalt, pinHash, code, deleteTokenHash, createdAt, expiresAt,
-      user?.id ?? null, wantsBurnAfterRead ? 1 : 0,
+      user?.id ?? null, wantsBurnAfterRead ? 1 : 0, encrypted ? 1 : 0, encrypted ? body.data.encryptionIv! : null,
     ),
-    ...(!wantsBurnAfterRead ? [env.DB.prepare("INSERT INTO network_notes (room_id, note_id, source, added_at) VALUES (?, ?, 'mine', ?)").bind(
+    ...(!wantsBurnAfterRead && !encrypted ? [env.DB.prepare("INSERT INTO network_notes (room_id, note_id, source, added_at) VALUES (?, ?, 'mine', ?)").bind(
       roomId,
       id,
       createdAt,
@@ -465,7 +488,7 @@ notesRoutes.post("/api/items", async (c) => {
     {
       ok: true,
       item: {
-        id, title, locked: wantsLock, burnAfterRead: wantsBurnAfterRead, code, createdAt, addedAt: createdAt, expiresAt, source: "mine",
+        id, title, locked: wantsLock, burnAfterRead: wantsBurnAfterRead, encrypted, code, createdAt, addedAt: createdAt, expiresAt, source: "mine",
         ...(user ? { sharedBy: { name: user.displayName, role: user.roleName, rank: user.rank } } : {}),
       },
       deleteToken,
@@ -485,7 +508,7 @@ notesRoutes.get("/api/local/item/:itemId", async (c) => {
     `SELECT n.*, ${SHARED_BY_COLUMNS} FROM notes n
      JOIN network_notes nn ON nn.note_id = n.id
      ${SHARED_BY_JOIN}
-     WHERE n.id = ? AND nn.room_id = ? AND n.expires_at > ? AND n.burn_after_read = 0 AND nn.added_at > ?`,
+     WHERE n.id = ? AND nn.room_id = ? AND n.expires_at > ? AND n.burn_after_read = 0 AND n.body_encrypted = 0 AND nn.added_at > ?`,
   )
     .bind(itemId, roomId, Date.now(), Date.now() - settings.networkVisibilityTtlSeconds * 1000)
     .first<RawNoteRow>();
@@ -504,7 +527,7 @@ notesRoutes.post("/api/local/item/:itemId/unlock", async (c) => {
     `SELECT n.*, ${SHARED_BY_COLUMNS} FROM notes n
      JOIN network_notes nn ON nn.note_id = n.id
      ${SHARED_BY_JOIN}
-     WHERE n.id = ? AND nn.room_id = ? AND n.expires_at > ? AND n.burn_after_read = 0 AND nn.added_at > ?`,
+     WHERE n.id = ? AND nn.room_id = ? AND n.expires_at > ? AND n.burn_after_read = 0 AND n.body_encrypted = 0 AND nn.added_at > ?`,
   )
     .bind(itemId, roomId, Date.now(), Date.now() - settings.networkVisibilityTtlSeconds * 1000)
     .first<RawNoteRow>();
@@ -523,14 +546,15 @@ notesRoutes.get("/api/share/:code", async (c) => {
   const note = await getNoteByCode(env, c.req.param("code"));
   if (!note) return jsonError("This share code is invalid or has expired.", 404, "CODE_NOT_FOUND");
   const via = normalizeAccessMethodParam(url);
-  if (!note.locked && !note.burnAfterRead && settings.crossNetworkAddEnabled) {
+  if (!note.locked && !note.burnAfterRead && !note.encrypted && settings.crossNetworkAddEnabled) {
     const roomId = await getRoomId(c.req.raw, env.APP_SECRET);
     await addNoteToRoom(env, note, roomId, constantTimeEqual(roomId, note.roomId) ? "mine" : "received");
   }
   await recordEvent(env, c.req.raw, "shared_note_opened", { via, locked: note.locked });
-  const payload = publicItemPayload(note, !note.locked);
+  const decryptReady = !note.encrypted || c.req.header("x-airtext-decrypt-ready") === "1";
+  const payload = publicItemPayload(note, !note.locked && decryptReady);
   const owner = await isDropOwner(c.req.raw, env, note.userId, note.deleteTokenHash);
-  if (!note.locked && note.burnAfterRead && !owner) {
+  if (!note.locked && decryptReady && note.burnAfterRead && !owner) {
     const consumed = await env.DB.prepare("DELETE FROM notes WHERE id = ? AND burn_after_read = 1 RETURNING id").bind(note.id).first();
     if (!consumed) return jsonError("This drop has already been opened.", 404, "CODE_NOT_FOUND");
   }
@@ -545,14 +569,15 @@ notesRoutes.post("/api/share/:code/unlock", async (c) => {
   if (!note) return jsonError("This share code is invalid or has expired.", 404, "CODE_NOT_FOUND");
   const result = await verifyPin(c.req.raw, env, note);
   if (!result.ok) return result.response;
-  if (!note.burnAfterRead && settings.crossNetworkAddEnabled) {
+  if (!note.burnAfterRead && !note.encrypted && settings.crossNetworkAddEnabled) {
     const roomId = await getRoomId(c.req.raw, env.APP_SECRET);
     await addNoteToRoom(env, note, roomId, constantTimeEqual(roomId, note.roomId) ? "mine" : "received");
   }
   await recordEvent(env, c.req.raw, "pin_unlocked", { via: normalizeAccessMethodParam(url) });
-  const payload = publicItemPayload(note, true);
+  const decryptReady = !note.encrypted || c.req.header("x-airtext-decrypt-ready") === "1";
+  const payload = publicItemPayload(note, decryptReady);
   const owner = await isDropOwner(c.req.raw, env, note.userId, note.deleteTokenHash);
-  if (note.burnAfterRead && !owner) {
+  if (decryptReady && note.burnAfterRead && !owner) {
     const consumed = await env.DB.prepare("DELETE FROM notes WHERE id = ? AND burn_after_read = 1 RETURNING id").bind(note.id).first();
     if (!consumed) return jsonError("This drop has already been opened.", 404, "CODE_NOT_FOUND");
   }
@@ -615,3 +640,7 @@ function normalizeAccessMethodParam(url: URL): "link" | "code" | "qr" | "network
 
 // Exported for admin.ts (admin delete-by-id reuses the same lookup/delete path).
 export { getNoteById, getNoteByCode, addNoteToRoom, publishNoteToRoom, applyNoteEdit, publicItemPayload };
+
+function validCiphertext(text: unknown, iv: unknown, version: unknown): boolean {
+  return version === 1 && typeof text === "string" && /^[A-Za-z0-9_-]{23,}$/.test(text) && typeof iv === "string" && /^[A-Za-z0-9_-]{16}$/.test(iv);
+}

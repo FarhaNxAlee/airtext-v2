@@ -246,6 +246,13 @@ adminRoutes.patch("/api/admin/settings", async (c) => {
   return jsonResponse({ ok: true, settings, message: "Settings saved." });
 });
 
+adminRoutes.get("/api/admin/item/:itemId", async (c) => {
+  const authError = await requireAdmin(c.req.raw,c.env);
+  if (authError) return authError;
+  const note = await getNoteById(c.env,c.req.param("itemId"));
+  return note ? jsonResponse(publicItemPayload(note,true)) : jsonError("Drop not found.",404,"NOT_FOUND");
+});
+
 adminRoutes.patch("/api/admin/item/:itemId", async (c) => {
   const env = c.env;
   const authError = await requireAdmin(c.req.raw, env, true);
@@ -255,7 +262,7 @@ adminRoutes.patch("/api/admin/item/:itemId", async (c) => {
   const settings = await getSiteSettings(env);
   const requester = await getAuthenticatedUser(c.req.raw, env);
   const limits = await getEffectiveLimits(env, requester);
-  const body = await readJsonBody<NoteEditPatch>(c.req.raw, Math.max(24_000, limits.maxTextLength + 2_000));
+  const body = await readJsonBody<NoteEditPatch>(c.req.raw, Math.max(24_000, limits.maxTextLength * 4 + 2_000));
   if (!body.ok) return body.response;
   const before = { title: note.title, text: note.text, locked: note.locked, burnAfterRead: note.burnAfterRead, expiresAt: note.expiresAt };
   const result = await applyNoteEdit(env, note, body.data, limits, settings);

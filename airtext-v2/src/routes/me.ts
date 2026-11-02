@@ -190,7 +190,7 @@ meRoutes.patch("/api/me/shares/notes/:noteId", async (c) => {
   if (!note || note.userId !== user.id) return jsonError("Note not found.", 404, "NOT_FOUND");
   const settings = await getSiteSettings(env);
   const limits = await getEffectiveLimits(env, user);
-  const body = await readJsonBody<NoteEditPatch>(c.req.raw, Math.max(24_000, limits.maxTextLength + 2_000));
+  const body = await readJsonBody<NoteEditPatch>(c.req.raw, Math.max(24_000, limits.maxTextLength * 4 + 2_000));
   if (!body.ok) return body.response;
   const result = await applyNoteEdit(env, note, body.data, limits, settings);
   if (!result.ok) return result.response;
@@ -257,8 +257,8 @@ meRoutes.post("/api/me/shares/notes/:noteId/share-to-network", async (c) => {
   if (!user) return jsonError("Sign in to manage your shares.", 401, "AUTH_REQUIRED");
   const note = await getNoteById(env, c.req.param("noteId"));
   if (!note || note.userId !== user.id) return jsonError("Note not found.", 404, "NOT_FOUND");
-  if (note.burnAfterRead) {
-    return jsonError("Open once drops can't be shared to a network board.", 409, "BURN_AFTER_READ_NOT_SHAREABLE");
+  if (note.burnAfterRead || note.encrypted) {
+    return jsonError("Open once and encrypted drops are available through their links only.", 409, "BURN_AFTER_READ_NOT_SHAREABLE");
   }
   const settings = await getSiteSettings(env);
   if (!settings.crossNetworkAddEnabled) {
@@ -281,7 +281,7 @@ meRoutes.post("/api/me/shares/files/:groupId/share-to-network", async (c) => {
   const group = await getGroupById(env, c.req.param("groupId"));
   if (!group || group.userId !== user.id) return jsonError("File not found.", 404, "NOT_FOUND");
   if (group.burnAfterRead) {
-    return jsonError("Open once drops can't be shared to a network board.", 409, "BURN_AFTER_READ_NOT_SHAREABLE");
+    return jsonError("Open once and encrypted drops are available through their links only.", 409, "BURN_AFTER_READ_NOT_SHAREABLE");
   }
   const settings = await getSiteSettings(env);
   if (!settings.crossNetworkAddEnabled) {

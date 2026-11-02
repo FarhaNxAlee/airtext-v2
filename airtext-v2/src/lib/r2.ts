@@ -50,15 +50,19 @@ export async function verifyFileDownloadToken(secret: string, fileId: string, to
 }
 
 /** Persist intent before deleting; a transient R2 failure never loses its retry key. */
-export async function deleteObjectsReliably(env: Env, keys: string[]): Promise<void> {
+export async function deleteObjectsReliably(env: Env, rawKeys: string[]): Promise<void> {
+  const keys = [...new Set(rawKeys)];
   if (!keys.length) return;
-  await env.DB.batch(keys.map((key) => env.DB.prepare("INSERT OR IGNORE INTO object_deletions (r2_key, created_at) VALUES (?, ?)").bind(key, Date.now())));
+  await env.DB.prepare("INSERT OR IGNORE INTO object_deletions (r2_key, created_at) SELECT value, ? FROM json_each(?)").bind(Date.now(),JSON.stringify(keys)).run();
   if (!env.FILES_BUCKET) return;
-  try {
-    await env.FILES_BUCKET.delete(keys);
-    await env.DB.batch(keys.map((key) => env.DB.prepare("DELETE FROM object_deletions WHERE r2_key = ?").bind(key)));
-  } catch (error) {
-    console.warn("Object deletion queued for retry", { count: keys.length, error: String(error) });
-    await env.DB.batch(keys.map((key) => env.DB.prepare("UPDATE object_deletions SET attempts = attempts + 1 WHERE r2_key = ?").bind(key)));
+  for (let offset=0; offset<keys.length; offset+=500) {
+    const chunk=keys.slice(offset,offset+500);
+    try {
+      await env.FILES_BUCKET.delete(chunk);
+      await env.DB.prepare("DELETE FROM object_deletions WHERE r2_key IN (SELECT value FROM json_each(?))").bind(JSON.stringify(chunk)).run();
+    } catch (error) {
+      console.warn("Object deletion queued for retry", { count: chunk.length, error: String(error) });
+      await env.DB.prepare("UPDATE object_deletions SET attempts=attempts+1 WHERE r2_key IN (SELECT value FROM json_each(?))").bind(JSON.stringify(chunk)).run();
+    }
   }
 }

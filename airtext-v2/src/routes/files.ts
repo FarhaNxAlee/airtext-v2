@@ -257,7 +257,7 @@ async function publicGroupPayload(env: Env, group: FileGroupRow, files: FileEntr
       locked: Boolean(group.locked),
       code: group.code,
       totalSizeBytes: group.totalSizeBytes,
-      fileCount: files.length,
+      fileCount: filePayloads.length,
       createdAt: Number(group.createdAt),
       expiresAt: Number(group.expiresAt),
       burnAfterRead: Boolean(group.burnAfterRead),
@@ -404,7 +404,7 @@ async function applyFileGroupEdit(
       });
     }
   } catch (error) {
-    await Promise.all(uploaded.map((entry) => env.FILES_BUCKET.delete(entry.r2Key).catch(() => {})));
+    await deleteObjectsReliably(env, uploaded.map((entry) => entry.r2Key));
     console.error("R2 upload failed", error);
     return { ok: false, response: jsonError("Could not store the files. Please try again.", 502, "STORAGE_WRITE_FAILED") };
   }
@@ -422,16 +422,17 @@ async function applyFileGroupEdit(
            VALUES (?, ?, ?, ?, ?, ?, 0, ?)`,
         ).bind(entry.id, group.id, entry.filename, entry.mime, entry.size, entry.r2Key, createdAt),
       ),
+      env.DB.prepare("INSERT OR IGNORE INTO object_deletions (r2_key,created_at) SELECT r2_key,? FROM files WHERE id IN (SELECT value FROM json_each(?))").bind(Date.now(),JSON.stringify(filesToRemove.map((file) => file.id))),
       ...filesToRemove.map((file) => env.DB.prepare("DELETE FROM files WHERE id = ?").bind(file.id)),
     ]);
   } catch (error) {
-    await Promise.all(uploaded.map((entry) => env.FILES_BUCKET.delete(entry.r2Key).catch(() => {})));
+    await deleteObjectsReliably(env, uploaded.map((entry) => entry.r2Key));
     console.error("File metadata write failed", error);
     return { ok: false, response: jsonError("Could not save the file changes. Please try again.", 500, "DB_WRITE_FAILED") };
   }
 
   if (filesToRemove.length) {
-    await Promise.all(filesToRemove.map((file) => env.FILES_BUCKET.delete(file.r2Key).catch(() => {})));
+    await deleteObjectsReliably(env, filesToRemove.map((file) => file.r2Key));
   }
 
   if (burnAfterRead) await env.DB.prepare("DELETE FROM network_files WHERE group_id = ?").bind(group.id).run();
@@ -633,7 +634,7 @@ filesRoutes.post("/api/files", async (c) => {
       });
     }
   } catch (error) {
-    await Promise.all(uploaded.map((entry) => env.FILES_BUCKET.delete(entry.r2Key).catch(() => {})));
+    await deleteObjectsReliably(env, uploaded.map((entry) => entry.r2Key));
     console.error("R2 upload failed", error);
     return jsonError("Could not store the files. Please try again.", 502, "STORAGE_WRITE_FAILED");
   }
@@ -662,7 +663,7 @@ filesRoutes.post("/api/files", async (c) => {
       )] : []),
     ]);
   } catch (error) {
-    await Promise.all(uploaded.map((entry) => env.FILES_BUCKET.delete(entry.r2Key).catch(() => {})));
+    await deleteObjectsReliably(env, uploaded.map((entry) => entry.r2Key));
     console.error("File metadata write failed", error);
     return jsonError("Could not save the file record. Please try again.", 500, "DB_WRITE_FAILED");
   }
@@ -703,7 +704,7 @@ filesRoutes.get("/api/local/file/:groupId", async (c) => {
   if (!group) return jsonError("This file has expired or is not available on this network.", 404, "NOT_FOUND");
   const files = await getFilesForGroup(env, group.id);
   await recordEvent(env, c.req.raw, "file_opened", { via: "network" });
-  return jsonResponse(await publicGroupPayload(env, group, files, !group.locked));
+  return jsonResponse(await publicGroupPayload(env, group, files, !group.locked, await isDropOwner(c.req.raw, env, group.userId, group.deleteTokenHash)));
 });
 
 filesRoutes.post("/api/local/file/:groupId/unlock", async (c) => {
@@ -725,7 +726,7 @@ filesRoutes.post("/api/local/file/:groupId/unlock", async (c) => {
   if (!result.ok) return result.response;
   const files = await getFilesForGroup(env, group.id);
   await recordEvent(env, c.req.raw, "file_pin_unlocked", { via: "network" });
-  return jsonResponse(await publicGroupPayload(env, group, files, true));
+  return jsonResponse(await publicGroupPayload(env, group, files, true, await isDropOwner(c.req.raw, env, group.userId, group.deleteTokenHash)));
 });
 
 filesRoutes.get("/api/share/file/:code", async (c) => {
@@ -741,7 +742,7 @@ filesRoutes.get("/api/share/file/:code", async (c) => {
   }
   const files = await getFilesForGroup(env, group.id);
   await recordEvent(env, c.req.raw, "shared_file_opened", { via, locked: group.locked });
-  return jsonResponse(await publicGroupPayload(env, group, files, !group.locked));
+  return jsonResponse(await publicGroupPayload(env, group, files, !group.locked, await isDropOwner(c.req.raw, env, group.userId, group.deleteTokenHash)));
 });
 
 filesRoutes.post("/api/share/file/:code/unlock", async (c) => {
@@ -758,7 +759,7 @@ filesRoutes.post("/api/share/file/:code/unlock", async (c) => {
   }
   const files = await getFilesForGroup(env, group.id);
   await recordEvent(env, c.req.raw, "file_pin_unlocked", { via: normalizeAccessMethodParam(url) });
-  return jsonResponse(await publicGroupPayload(env, group, files, true));
+  return jsonResponse(await publicGroupPayload(env, group, files, true, await isDropOwner(c.req.raw, env, group.userId, group.deleteTokenHash)));
 });
 
 filesRoutes.get("/api/file/:fileId/download", async (c) => {
@@ -796,20 +797,20 @@ filesRoutes.get("/api/file/:fileId/download", async (c) => {
     if (!claimed) return jsonError("This file has already been downloaded.", 404, "NOT_FOUND");
     const reader = object.body.getReader();
     let finished = false;
-    const finish = () => {
+    const finish = async () => {
       if (finished) return;
       finished = true;
-      c.executionCtx.waitUntil(deleteObjectsReliably(env, [entry.r2Key]));
+      await deleteObjectsReliably(env, [entry.r2Key]);
     };
     const stream = new ReadableStream<Uint8Array>({
       async pull(controller) {
         try {
           const next = await reader.read();
-          if (next.done) { controller.close(); finish(); }
+          if (next.done) { await finish(); controller.close(); }
           else controller.enqueue(next.value);
-        } catch (error) { controller.error(error); finish(); }
+        } catch (error) { await finish(); controller.error(error); }
       },
-      async cancel(reason) { await reader.cancel(reason); finish(); },
+      async cancel(reason) { await reader.cancel(reason); await finish(); },
     });
     return new Response(stream, { headers: {
       "content-type": entry.mime || "application/octet-stream",
@@ -874,14 +875,14 @@ filesRoutes.patch("/api/file/:groupId", async (c) => {
   const result = await applyFileGroupEdit(env, group, existingFiles, form, limits, settings);
   if (!result.ok) return result.response;
   await recordEvent(env, c.req.raw, "file_edited", { by: "creator" });
-  return jsonResponse({ ...(await publicGroupPayload(env, result.group, result.files, true)), message: "File updated." });
+  return jsonResponse({ ...(await publicGroupPayload(env, result.group, result.files, true, true)), message: "File updated." });
 });
 
 async function deleteGroupAndFiles(env: Env, groupId: string): Promise<void> {
   const files = await getFilesForGroup(env, groupId);
   // Persist a retry path in the same transaction that removes metadata.
   await env.DB.batch([
-    ...files.map((file) => env.DB.prepare("INSERT OR IGNORE INTO object_deletions (r2_key, created_at) VALUES (?, ?)").bind(file.r2Key, Date.now())),
+    env.DB.prepare("INSERT OR IGNORE INTO object_deletions (r2_key, created_at) SELECT r2_key, ? FROM files WHERE group_id = ?").bind(Date.now(), groupId),
     env.DB.prepare("DELETE FROM files WHERE group_id = ?").bind(groupId),
     env.DB.prepare("DELETE FROM file_groups WHERE id = ?").bind(groupId),
   ]);
