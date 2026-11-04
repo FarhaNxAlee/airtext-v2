@@ -22,6 +22,17 @@ export function storeKey(code, key) {
   keys.set(code,key);
   try { globalThis.sessionStorage?.setItem(`airtext_key:${code}`,key); } catch { /* Memory-only fallback. */ }
 }
+export function clearStoredKeys() {
+  keys.clear();
+  try {
+    const storage = globalThis.sessionStorage;
+    if (!storage) return;
+    for (let i = storage.length - 1; i >= 0; i--) {
+      const k = storage.key(i);
+      if (k && k.startsWith("airtext_key:")) storage.removeItem(k);
+    }
+  } catch { /* Ignore storage errors. */ }
+}
 export function rememberLinkKey(value) {
   const url = new URL(value, globalThis.location?.origin || "https://example.com");
   const code = url.pathname.match(/^\/s\/([A-Za-z0-9]{4,12})\/?$/)?.[1].toUpperCase();

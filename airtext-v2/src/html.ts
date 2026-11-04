@@ -234,8 +234,8 @@ const SHARED_MODALS = String.raw`<div id="maintenance-modal" class="maintenance-
       <div class="flex items-start justify-between gap-4 border-b border-white/5 px-5 py-4 sm:px-6">
         <div class="min-w-0">
           <div class="flex flex-wrap items-center gap-2">
-            <span id="modal-lock-badge" class="rounded border px-2 py-1 text-[10px] font-semibold uppercase tracking-wider"></span>
-            <span id="modal-expiry" data-expires="0" class="rounded border border-[var(--line)] px-2 py-1 text-[10px] text-neutral-500">Expires soon</span>
+            <span id="modal-lock-badge" class="note-badge"></span>
+            <span id="modal-expiry" data-expires="0" class="note-badge">Expires soon</span>
           </div>
           <h2 id="modal-title" class="mt-3 truncate text-xl font-semibold text-white">Shared text</h2>
         </div>
@@ -246,7 +246,7 @@ const SHARED_MODALS = String.raw`<div id="maintenance-modal" class="maintenance-
 
       <div class="scrollbar-thin max-h-[calc(92vh-80px)] overflow-y-auto p-5 sm:p-6">
         <div id="modal-loading" class="py-14 text-center">
-          <span class="mx-auto block h-7 w-7 animate-spin rounded-full border-2 border-[var(--line)] border-t-violet-400"></span>
+          <span class="mx-auto block h-7 w-7 animate-spin rounded-full border-2 border-[var(--line)] border-t-[var(--accent)]"></span>
           <p class="mt-3 text-sm text-neutral-500">Opening…</p>
         </div>
 
@@ -265,23 +265,26 @@ const SHARED_MODALS = String.raw`<div id="maintenance-modal" class="maintenance-
         </form>
 
         <div id="modal-content" class="hidden">
-          <p id="modal-shared-by" class="mb-2 hidden text-xs text-neutral-500"></p>
-          <div class="overflow-hidden rounded-xl border border-white/[.07] bg-black/20">
-            <div class="flex items-center justify-between border-b border-white/5 px-4 py-3">
-              <p class="text-xs text-neutral-600">TEXT</p>
-              <button type="button" data-action="copy-text" class="rounded-md px-3 py-1.5 text-xs text-neutral-400 transition hover:bg-white/5 hover:text-white">Copy</button>
+          <div id="modal-shared-by" class="modal-shared-by-row mb-3 hidden"></div>
+          <div class="modal-text-shell overflow-hidden rounded-xl border border-[var(--line)] bg-[var(--panel-soft)]">
+            <div class="modal-text-toolbar">
+              <span class="modal-text-label">Text</span>
+              <div class="modal-text-toolbar-actions">
+                <div id="modal-text-tools-slot"></div>
+                <button type="button" data-action="copy-text" class="action-btn primary-action">Copy text</button>
+              </div>
             </div>
-            <pre id="modal-text" class="linkified-text scrollbar-thin max-h-[48vh] overflow-auto whitespace-pre-wrap break-words p-5 font-sans text-sm leading-7 text-slate-200"></pre>
+            <pre id="modal-text" class="linkified-text scrollbar-thin max-h-[48vh] min-h-[110px] overflow-auto whitespace-pre-wrap break-words p-5 font-sans text-sm leading-7 text-slate-200"></pre>
           </div>
 
-          <div class="mt-4 flex flex-col gap-2 sm:flex-row">
-            <button type="button" data-action="show-current-qr" class="flex-1 rounded-md border border-[var(--line)] px-4 py-3 text-sm text-neutral-300 transition hover:border-violet-500/60 hover:bg-[var(--accent-soft)] hover:text-white">
+          <div class="modal-footer-actions mt-4 flex flex-col gap-2.5 sm:flex-row">
+            <button type="button" data-action="show-current-qr" class="action-btn flex-1 py-2.5 text-sm font-semibold">
               Code & QR
             </button>
-            <button id="edit-item-button" type="button" data-action="open-edit-item-modal" class="hidden flex-1 items-center justify-center rounded-md border border-[var(--line)] px-4 py-3 text-sm text-neutral-300 transition hover:bg-white/5 hover:text-white">
+            <button id="edit-item-button" type="button" data-action="open-edit-item-modal" class="action-btn hidden flex-1 items-center justify-center py-2.5 text-sm font-semibold">
               Edit
             </button>
-            <button id="delete-item-button" type="button" data-action="delete-current-item" class="hidden flex-1 items-center justify-center rounded-md border border-red-500/20 px-4 py-3 text-sm text-red-300 transition hover:bg-red-500/10">
+            <button id="delete-item-button" type="button" data-action="delete-current-item" class="action-btn modal-delete-btn hidden flex-1 items-center justify-center py-2.5 text-sm font-semibold">
               Delete
             </button>
           </div>
@@ -295,8 +298,8 @@ const SHARED_MODALS = String.raw`<div id="maintenance-modal" class="maintenance-
       <div class="flex items-start justify-between gap-4 border-b border-white/5 px-5 py-4 sm:px-6">
         <div class="min-w-0">
           <div class="flex flex-wrap items-center gap-2">
-            <span id="file-modal-lock-badge" class="rounded border px-2 py-1 text-[10px] font-semibold uppercase tracking-wider"></span>
-            <span id="file-modal-expiry" class="rounded border border-[var(--line)] px-2 py-1 text-[10px] text-neutral-500">Expires soon</span>
+            <span id="file-modal-lock-badge" class="note-badge"></span>
+            <span id="file-modal-expiry" class="note-badge">Expires soon</span>
           </div>
           <h2 id="file-modal-title" class="mt-3 truncate text-xl font-semibold text-white">Shared file</h2>
         </div>
@@ -307,7 +310,7 @@ const SHARED_MODALS = String.raw`<div id="maintenance-modal" class="maintenance-
 
       <div class="scrollbar-thin max-h-[calc(92vh-80px)] overflow-y-auto p-5 sm:p-6">
         <div id="file-modal-loading" class="py-14 text-center">
-          <span class="mx-auto block h-7 w-7 animate-spin rounded-full border-2 border-[var(--line)] border-t-violet-400"></span>
+          <span class="mx-auto block h-7 w-7 animate-spin rounded-full border-2 border-[var(--line)] border-t-[var(--accent)]"></span>
           <p class="mt-3 text-sm text-neutral-500">Opening…</p>
         </div>
 
@@ -326,12 +329,12 @@ const SHARED_MODALS = String.raw`<div id="maintenance-modal" class="maintenance-
         </form>
 
         <div id="file-modal-content" class="hidden">
-          <p id="file-modal-shared-by" class="mb-2 hidden text-xs text-neutral-500"></p>
-          <div id="file-modal-list" class="grid gap-2"></div>
-          <div class="mt-4 flex flex-col gap-2 sm:flex-row">
-            <button type="button" data-action="show-current-file-qr" class="flex-1 rounded-md border border-[var(--line)] px-4 py-3 text-sm text-neutral-300 transition hover:border-violet-500/60 hover:bg-[var(--accent-soft)] hover:text-white">Code & QR</button>
-            <button id="edit-file-button" type="button" data-action="open-edit-file-modal" class="hidden flex-1 items-center justify-center rounded-md border border-[var(--line)] px-4 py-3 text-sm text-neutral-300 transition hover:bg-white/5 hover:text-white">Edit</button>
-            <button id="delete-file-button" type="button" data-action="delete-current-file" class="hidden flex-1 items-center justify-center rounded-md border border-red-500/20 px-4 py-3 text-sm text-red-300 transition hover:bg-red-500/10">Delete</button>
+          <div id="file-modal-shared-by" class="modal-shared-by-row mb-3 hidden"></div>
+          <div id="file-modal-list" class="grid gap-2.5"></div>
+          <div class="modal-footer-actions mt-4 flex flex-col gap-2.5 sm:flex-row">
+            <button type="button" data-action="show-current-file-qr" class="action-btn flex-1 py-2.5 text-sm font-semibold">Code & QR</button>
+            <button id="edit-file-button" type="button" data-action="open-edit-file-modal" class="action-btn hidden flex-1 items-center justify-center py-2.5 text-sm font-semibold">Edit</button>
+            <button id="delete-file-button" type="button" data-action="delete-current-file" class="action-btn modal-delete-btn hidden flex-1 items-center justify-center py-2.5 text-sm font-semibold">Delete</button>
           </div>
         </div>
       </div>
@@ -579,7 +582,7 @@ const ADMIN_APP_SECTION = String.raw`<section id="admin-app" class="admin-screen
       </div>
     </header>
 
-    <div class="admin-wrap">
+    <div id="admin-login-wrap" class="admin-wrap">
       <section id="admin-login-card" class="mx-auto mt-12 max-w-md rounded-xl border border-[var(--line)] bg-[var(--panel)] p-6">
         <p class="hero-kicker">Administrator</p>
         <h1 class="mt-3 text-3xl font-bold text-white">Manage AirText</h1>
@@ -1343,42 +1346,112 @@ function pageQrContent(): string {
     </div>`;
 }
 
+function guideTip(title: string, body: string): string {
+  return `<li class="flex gap-2"><span class="text-[var(--accent)]">•</span><span><strong class="text-white">${title}</strong> -- ${body}</span></li>`;
+}
+
+function guideCard(title: string, body: string): string {
+  return `<div class="glass-panel rounded-2xl p-5">
+          <h3 class="font-semibold text-white">${title}</h3>
+          <p class="mt-2 text-sm leading-6 text-slate-500">${body}</p>
+        </div>`;
+}
+
 function pageGuideContent(): string {
   return String.raw`<div class="mx-auto max-w-3xl">
       <p id="guide-eyebrow" class="hero-kicker">How to use</p>
       <h1 id="guide-title" class="mt-2 text-3xl font-bold text-white sm:text-4xl">Share in four steps</h1>
-      <p class="mt-2 text-sm leading-6 text-slate-500">Whether it's text or files, every drop follows the same four steps from create to receive.</p>
+      <p class="mt-2 text-sm leading-6 text-slate-500">AirText moves text and files between your own devices, or to someone else, without sign-ups, cables or chat apps. Every drop follows the same four steps, and it removes itself when its time is up.</p>
       <div class="mt-6 glass-panel rounded-2xl p-5 sm:p-7">
-        <div class="guide-step"><span class="step-number">1</span><div><strong id="guide-step1-title">Create</strong><p id="guide-step1-text" class="mt-1 text-sm text-slate-500">Add a title and paste or type your note, or choose a file to send.</p></div></div>
-        <div class="guide-step"><span class="step-number">2</span><div><strong id="guide-step2-title">Protect</strong><p id="guide-step2-text" class="mt-1 text-sm text-slate-500">Optionally lock it with a PIN before saving, or set it to open once.</p></div></div>
-        <div class="guide-step"><span class="step-number">3</span><div><strong id="guide-step3-title">Share</strong><p id="guide-step3-text" class="mt-1 text-sm text-slate-500">Send the link, short code or QR.</p></div></div>
-        <div class="guide-step"><span class="step-number">4</span><div><strong id="guide-step4-title">Receive</strong><p id="guide-step4-text" class="mt-1 text-sm text-slate-500">Opening it adds the drop to that Wi-Fi until it disappears.</p></div></div>
+        <div class="guide-step"><span class="step-number">1</span><div><strong id="guide-step1-title">Create</strong><p id="guide-step1-text" class="mt-1 text-sm text-slate-500">Add a title, then type or paste your note, or choose the files you want to send.</p></div></div>
+        <div class="guide-step"><span class="step-number">2</span><div><strong id="guide-step2-title">Protect</strong><p id="guide-step2-text" class="mt-1 text-sm text-slate-500">Optionally lock it with a PIN, set it to open once, or choose how long it stays.</p></div></div>
+        <div class="guide-step"><span class="step-number">3</span><div><strong id="guide-step3-title">Share</strong><p id="guide-step3-text" class="mt-1 text-sm text-slate-500">Send the link, read out the short code, or let someone scan the QR code.</p></div></div>
+        <div class="guide-step"><span class="step-number">4</span><div><strong id="guide-step4-title">Receive</strong><p id="guide-step4-text" class="mt-1 text-sm text-slate-500">Open it on any device. Drops also appear in Nearby for people on the same Wi-Fi while they are active.</p></div></div>
       </div>
 
-      <h2 class="mt-10 text-xl font-bold text-white">Sending text vs. files</h2>
-      <div class="mt-4 grid gap-4 sm:grid-cols-2">
-        <div class="glass-panel rounded-2xl p-5">
-          <h3 class="font-semibold text-white">Text (<a href="/text" class="text-[var(--accent)]">/text</a>)</h3>
-          <p class="mt-2 text-sm leading-6 text-slate-500">Paste or type directly into the box -- no file needed. Good for codes, notes, addresses, or anything you'd otherwise copy-paste over chat.</p>
-        </div>
-        <div class="glass-panel rounded-2xl p-5">
-          <h3 class="font-semibold text-white">Files (<a href="/files" class="text-[var(--accent)]">/files</a>)</h3>
-          <p class="mt-2 text-sm leading-6 text-slate-500">Upload one or several files at once, up to your plan's size limit. Good for photos, documents, or anything that isn't plain text.</p>
-        </div>
-      </div>
-
-      <h2 class="mt-10 text-xl font-bold text-white">A few tips</h2>
+      <h2 class="mt-10 text-xl font-bold text-white">Before you start</h2>
       <ul class="mt-4 grid gap-3 text-sm leading-6 text-slate-500">
-        <li class="flex gap-2"><span class="text-[var(--accent)]">•</span><span><strong class="text-white">PIN</strong> -- lock a drop so only someone with the PIN can open it. Anyone can still see it listed as "Locked" on <a href="/nearby" class="text-[var(--accent)]">Nearby</a>, but not its contents.</span></li>
-        <li class="flex gap-2"><span class="text-[var(--accent)]">•</span><span><strong class="text-white">Open once</strong> -- the drop deletes itself after its first recipient read (each file attachment permits one recipient download). Good for anything you only want seen a single time.</span></li>
-        <li class="flex gap-2"><span class="text-[var(--accent)]">•</span><span><strong class="text-white">Custom code</strong> -- Pro and Member accounts can pick their own short code instead of a random one, making it easier to say out loud or remember.</span></li>
-        <li class="flex gap-2"><span class="text-[var(--accent)]">•</span><span><strong class="text-white">Expiry</strong> -- choose how long a drop sticks around (10 minutes, 1 hour, 1 day) instead of using the default.</span></li>
-        <li class="flex gap-2"><span class="text-[var(--accent)]">•</span><span><strong class="text-white">Nearby</strong> -- devices sharing your public IP can see what's been shared without a code, so use a PIN for anything you don't want visible to others on that network.</span></li>
+        ${guideTip("No account needed", "you can send and receive right away. Signing in is optional and only adds extras such as a My Drops page.")}
+        ${guideTip("Works everywhere", "phones, tablets and computers, in any modern browser. Nothing to install.")}
+        ${guideTip("Temporary by design", "every drop has a countdown. When it reaches zero the drop is gone for everyone.")}
       </ul>
+
+      <h2 class="mt-10 text-xl font-bold text-white">Sending text</h2>
+      <ol class="mt-4 grid gap-3 text-sm leading-6 text-slate-500">
+        <li><strong class="text-white">1. Open <a href="/text" class="text-[var(--accent)]">Send text</a>.</strong> Give your note a short title so you can recognise it later.</li>
+        <li><strong class="text-white">2. Type or paste your text.</strong> Good for passwords you need to move between devices, addresses, links, snippets, meeting notes or anything you would otherwise message to yourself.</li>
+        <li><strong class="text-white">3. Pick your options.</strong> Add a PIN, turn on Open once, or choose a shorter expiry. All of these are optional.</li>
+        <li><strong class="text-white">4. Press share.</strong> You will get a link, a short code and a QR code. Copy whichever suits the situation.</li>
+      </ol>
+
+      <h2 class="mt-10 text-xl font-bold text-white">Sending files</h2>
+      <ol class="mt-4 grid gap-3 text-sm leading-6 text-slate-500">
+        <li><strong class="text-white">1. Open <a href="/files" class="text-[var(--accent)]">Send files</a>.</strong> The page shows the largest file size and the number of files allowed for you.</li>
+        <li><strong class="text-white">2. Choose or drag your files in.</strong> You can add several at once, such as a batch of photos or a few documents.</li>
+        <li><strong class="text-white">3. Add a PIN or Open once if you want.</strong> Then share the link, code or QR the same way as with text.</li>
+        <li><strong class="text-white">4. Wait for the upload to finish</strong> before closing the page, especially on mobile data or slow Wi-Fi.</li>
+      </ol>
+
+      <h2 class="mt-10 text-xl font-bold text-white">Receiving a drop</h2>
+      <div class="mt-4 grid gap-4 sm:grid-cols-2">
+        ${guideCard("From a link", "Just open it. The drop loads straight away, or asks for the PIN first if the sender added one.")}
+        ${guideCard("From a code", 'Go to <a href="/receive" class="text-[var(--accent)]">Receive</a>, type the short code and press open. Codes are not case sensitive.')}
+        ${guideCard("From a QR code", "Use the scan button on the Receive page, or your phone camera, and point it at the QR code on the other screen.")}
+        ${guideCard("From Nearby", 'Open <a href="/nearby" class="text-[var(--accent)]">Nearby</a> on the same Wi-Fi and tap any drop you see. No code needed.')}
+      </div>
+
+      <h2 class="mt-10 text-xl font-bold text-white">Nearby: sharing on the same Wi-Fi</h2>
+      <p class="mt-3 text-sm leading-6 text-slate-500">When you share a drop, it can show up in Nearby for other devices using the same internet connection, for example everyone on your home, office or campus Wi-Fi. It is the quickest way to send something to the laptop next to you without typing a code.</p>
+      <ul class="mt-4 grid gap-3 text-sm leading-6 text-slate-500">
+        ${guideTip("Only titles are listed", "people nearby see the title, the type and who shared it (if they were signed in), not the contents.")}
+        ${guideTip("Shared connections", "public Wi-Fi, mobile hotspots and VPNs can put many strangers on the same network. If that applies, add a PIN.")}
+        ${guideTip("Remote sharing still works", "people on a different network can open your drop with the link, code or QR code.")}
+        ${guideTip("Open once and encrypted drops stay private", "they are never listed in Nearby.")}
+      </ul>
+
+      <h2 class="mt-10 text-xl font-bold text-white">Protection options</h2>
+      <div class="mt-4 grid gap-4 sm:grid-cols-2">
+        ${guideCard("PIN lock", "Only people who know the PIN can read the drop, even if they have the link. Tell the PIN to the recipient separately, ideally by another route. The PIN is kept in a scrambled form and cannot be read back, so keep a note of it yourself.")}
+        ${guideCard("Open once", "The drop deletes itself after its first recipient opens it. For files, each attachment can be downloaded once. Use it for sensitive items you only want seen a single time. Do not open your own link to test it, as that may use it up.")}
+        ${guideCard("Extra encryption", "Where available, you can lock the text with a key that stays on your device. The full link carries the key, so always share the complete link. If the key is lost, the text cannot be recovered by anyone, including us.")}
+        ${guideCard("Expiry", "Choose how long the drop should last. A shorter time means less exposure. After expiry it cannot be opened by anyone.")}
+      </div>
+
+      <h2 class="mt-10 text-xl font-bold text-white">Managing your drops</h2>
+      <ul class="mt-4 grid gap-3 text-sm leading-6 text-slate-500">
+        ${guideTip("Without an account", "the browser you used to create a drop can edit or delete it from the Recent drops list and the drop window. Clearing your browser data removes that ability, so delete anything important before you do.")}
+        ${guideTip("With an account", "your drops are listed under My Drops and can be opened, edited, shared to Nearby or deleted from any device where you are signed in.")}
+        ${guideTip("Edit", "change the title, text, PIN, expiry or files after sharing. The link and code stay the same.")}
+        ${guideTip("Delete", "removes the drop straight away for everyone. This cannot be undone.")}
+        ${guideTip("Signing out", "removes the saved drop shortcuts from that browser, which is useful on shared computers.")}
+      </ul>
+
+      <h2 class="mt-10 text-xl font-bold text-white">Accounts</h2>
+      <p class="mt-3 text-sm leading-6 text-slate-500">Accounts are created by the site administrator, so there is no public sign-up. If you need one, use the request option on the <a href="/login" class="text-[var(--accent)]">sign-in page</a>. Depending on your plan an account can give you larger files, longer-lasting drops, your own short codes and a My Drops page that follows you across devices.</p>
+
+      <h2 class="mt-10 text-xl font-bold text-white">Good habits</h2>
+      <ul class="mt-4 grid gap-3 text-sm leading-6 text-slate-500">
+        ${guideTip("Use a PIN for anything private", "especially on shared or public networks.")}
+        ${guideTip("Share links with the right person only", "anyone holding the link or code can open an unlocked drop.")}
+        ${guideTip("Check the countdown", "if you need something for longer, create a new drop before the old one expires.")}
+        ${guideTip("Keep originals", "AirText is for passing things along, not for storing them. Keep your own copy of anything you cannot afford to lose.")}
+        ${guideTip("Delete when finished", "once the other person has what they need, remove the drop.")}
+      </ul>
+
+      <h2 class="mt-10 text-xl font-bold text-white">Troubleshooting</h2>
+      <div class="mt-4 grid gap-3">
+        ${guideCard("The code says it is not found", "Check for typing mistakes, such as 0 and O. The drop may have expired, been deleted, or been an Open once drop that was already opened.")}
+        ${guideCard("I cannot see a drop in Nearby", "Both devices must be on the same internet connection. Mobile data and Wi-Fi count as different networks. Press Refresh, and ask the sender for the link or code if it still does not appear.")}
+        ${guideCard("The PIN is not accepted", "Check the PIN with the sender. After several wrong tries you will be asked to wait a moment before trying again.")}
+        ${guideCard("My upload fails", "Check the size and number of files against the limits shown on the page, and make sure your connection stays on until the upload finishes.")}
+        ${guideCard("I get a message about too many attempts", "Wait a minute and try again. This limit protects drops from being guessed and clears quickly.")}
+        ${guideCard("The Edit and Delete buttons are missing", "They only show for the person who created the drop. Use the same browser, or sign in to the account that created it.")}
+      </div>
 
       <p class="mt-8 text-sm leading-6 text-slate-500">Still have questions? Read the <a href="/faq" class="text-[var(--accent)]">FAQ</a> or <a href="/about" class="text-[var(--accent)]">learn more about AirText</a>.</p>
     </div>`;
 }
+
 
 function pageAboutContent(): string {
   return String.raw`<div class="mx-auto max-w-3xl">
@@ -1399,16 +1472,38 @@ function pageAboutContent(): string {
 }
 
 const FAQ_ENTRIES: Array<{ question: string; answer: string }> = [
+  { question: "What is AirText?", answer: "AirText is a simple way to send text and files to another device or person. You create a drop, share a link, short code or QR code, and it disappears on its own after a set time." },
   { question: "Is AirText free?", answer: "Yes. Anyone can send text or files without paying and without creating an account." },
-  { question: "Do I need an account?", answer: "No. Anonymous sharing works fully without one. Signing in (invite-only) adds a My Drops dashboard, custom links on some plans, and higher limits." },
-  { question: "How long do drops last?", answer: "Every drop shows a \"disappears in\" countdown. The exact duration is set by the site admin and can differ for text versus files." },
-  { question: "What happens after a drop expires?", answer: "It becomes unavailable immediately. Scheduled cleanup removes stored data, with retries after storage failures. Operational backups may retain older data temporarily." },
-  { question: "Is my content encrypted or private?", answer: "PINs and account passwords are never stored in plain text -- they're one-way hashed. On enabled plans, choose browser encryption to keep the text encrypted on the server. Keep the complete share link; PINs and encryption keys are separate. See the Privacy policy for details." },
-  { question: "What's a PIN for?", answer: "\"Lock it\" with a PIN so only someone who knows the PIN can open your drop, even if they have the link or code." },
-  { question: "What's \"Open once\" for?", answer: "An optional setting that deletes the drop after its first recipient read; each file attachment allows one recipient download -- useful for sharing something sensitive exactly one time." },
-  { question: "Are there file size limits?", answer: "Yes. The site admin sets a per-file and a per-batch size limit, shown on the upload page before you send. Some signed-in plans allow larger uploads." },
-  { question: "Can I choose my own link?", answer: "If your plan allows it, yes -- pick your own short code instead of a random one when creating a drop." },
-  { question: "What's the difference between anonymous and signed-in drops?", answer: "Anonymous drops show no owner information and can only be managed from the browser that created them. Signed-in drops appear in your My Drops dashboard and can be managed from any device." },
+  { question: "Do I need an account?", answer: "No. Sharing works fully without one. Signing in is optional and adds a My Drops page, management from any device, and extra options on some plans." },
+  { question: "How do I get an account?", answer: "Accounts are created by the site administrator and there is no public sign-up. Use the request option on the sign-in page and explain what you need it for." },
+  { question: "How do I send something?", answer: "Open Send text or Send files, add your content, press share, then give the other person the link, code or QR code. The Guide page walks through every step." },
+  { question: "How do I receive something?", answer: "Open the link, type the code on the Receive page, scan the QR code, or tap the drop in Nearby if you are on the same Wi-Fi." },
+  { question: "How long do drops last?", answer: "Every drop shows a countdown. The default time is set by the site and can differ for text and files. You can often choose a shorter time when you create it." },
+  { question: "What happens when a drop expires?", answer: "It becomes unavailable straight away and is cleaned up shortly afterwards. Nobody can open it again, including the person who created it." },
+  { question: "What is the Nearby page?", answer: "Nearby lists drops shared from the same internet connection as yours, such as the same home, office or campus Wi-Fi. You see titles only and can open a drop with one tap." },
+  { question: "Why do I see drops from other people in Nearby?", answer: "Everyone on the same connection sees the same Nearby list. On public Wi-Fi, hotspots or VPNs that can include strangers, so use a PIN for anything private." },
+  { question: "Why can't I see my drop in Nearby on another device?", answer: "Both devices need to use the same internet connection. Wi-Fi and mobile data count as different networks. Open Once and encrypted drops are never listed in Nearby, so share those with the link or code." },
+  { question: "What is a PIN for?", answer: "A PIN locks your drop so only someone who knows it can open the contents, even if they have the link or code. Share the PIN separately from the link." },
+  { question: "What if I forget the PIN?", answer: "PINs cannot be read back or reset. You can edit the drop if you created it and set a new PIN, or simply create a new drop." },
+  { question: "What does Open once mean?", answer: "The drop deletes itself after its first recipient opens it. For files, each attachment can be downloaded once. It is useful for sensitive items you want seen a single time." },
+  { question: "Why did my Open once drop disappear?", answer: "Someone, possibly you, has already opened it. Avoid opening your own link to test it. Create a new drop if you need to send it again." },
+  { question: "Is my content private?", answer: "Drops are only reachable with their link or code, and a PIN adds another lock. Where available you can also add extra encryption in your browser. We do not read drop contents. See the Privacy policy for details." },
+  { question: "What is extra encryption?", answer: "An optional setting that scrambles your text on your device before it is sent. The key travels inside the full link, so share the complete link. If the key is lost, nobody can recover the text." },
+  { question: "Can anyone else open my drop?", answer: "Anyone who has your link or code can open an unlocked drop, so share them only with the right people. Add a PIN for more protection." },
+  { question: "Are there file size limits?", answer: "Yes. The upload page shows the largest single file, the number of files and the total size allowed for you. Some signed-in plans allow more." },
+  { question: "Which file types can I send?", answer: "Most common files such as photos, documents and archives. A few risky file types may be blocked. If a file is refused, the page tells you why." },
+  { question: "Can I choose my own code?", answer: "If your plan allows it, yes. Pick a short custom code instead of a random one when you create a drop. Codes must be unique and use letters and numbers only." },
+  { question: "Can I edit or delete a drop after sharing?", answer: "Yes, if you created it. Without an account this works from the same browser you used. With an account it works from any device where you are signed in." },
+  { question: "I cleared my browser data and lost access to my drop. What now?", answer: "Drops created without an account can only be managed from the browser that made them. If you cannot get back in, the drop will simply expire on its own, or you can create a new one." },
+  { question: "What is the difference between anonymous and signed-in drops?", answer: "Anonymous drops show no owner. Signed-in drops show your name and badge, appear in My Drops, and can be managed from any device." },
+  { question: "What does the badge next to a name mean?", answer: "It shows the type of account that shared the drop, such as Admin, Pro or Member, so you know who it came from." },
+  { question: "What happens when I sign out?", answer: "You are signed out and the saved drop shortcuts and keys are removed from that browser. Drops linked to your account stay safe and appear again when you sign back in." },
+  { question: "I see a message about too many attempts. What should I do?", answer: "Wait a minute and try again. Limits on guessing codes and PINs protect everyone's drops, and they clear quickly for normal use." },
+  { question: "Does AirText work on phones?", answer: "Yes. It works in any modern browser on phones, tablets and computers, and you can scan QR codes with your camera." },
+  { question: "Can I use AirText to store files long term?", answer: "No. Drops are temporary and may be removed at any time. Always keep your own copy of anything important." },
+  { question: "What should I not share?", answer: "Anything illegal, harmful or that belongs to someone else. See the Terms of service for the full rules." },
+  { question: "How do I report a problem or give feedback?", answer: "Use the feedback form in the menu. You can include an email address if you would like a reply, but it is optional." },
+  { question: "Where can I read the rules and privacy details?", answer: "The Terms of service and Privacy policy pages, linked in the footer, explain them in plain language." },
 ];
 
 function pageFaqContent(): string {
@@ -1444,36 +1539,101 @@ function buildFaqStructuredData(): string {
   return `<script type="application/ld+json">${safeJsonForScript(structuredData)}</script>`;
 }
 
+function legalBlock(heading: string, paragraphs: string[]): string {
+  return `<h2 class="text-base font-semibold text-white">${heading}</h2>
+        ${paragraphs.map((text) => `<p>${text}</p>`).join("\n        ")}`;
+}
+
+function legalList(heading: string, intro: string, items: string[]): string {
+  return `<h2 class="text-base font-semibold text-white">${heading}</h2>
+        <p>${intro}</p>
+        <ul class="grid gap-2 pl-5" style="list-style:disc">${items.map((item) => `<li>${item}</li>`).join("")}</ul>`;
+}
+
 function pagePrivacyContent(): string {
   return String.raw`<div class="mx-auto max-w-3xl">
       <p class="hero-kicker">Legal</p>
       <h1 class="mt-2 text-3xl font-bold text-white sm:text-4xl">Privacy policy</h1>
+      <p class="mt-2 text-xs text-slate-500">Last updated: November 2026</p>
       <div class="mt-6 grid gap-5 text-sm leading-7 text-slate-400">
-        <p>AirText is built to hold as little about you as possible. This page explains, plainly, what is stored and why.</p>
+        <p>AirText is built to keep as little about you as possible. This page explains in plain language what we keep, why we keep it, and the choices you have.</p>
 
-        <h2 class="text-base font-semibold text-white">What we store</h2>
-        <p>Drops (text notes and uploaded files) are stored in our database (Cloudflare D1) and, for files, our object storage (Cloudflare R2). Anonymous drops are not linked to any identity. If you're signed in, a drop is linked to your account id so it can appear in your My Drops dashboard.</p>
+        ${legalList("The short version", "In a few lines:", [
+          "You can use AirText without an account or any personal details.",
+          "We do not read your drops and we do not sell your information.",
+          "There are no advertising or tracking cookies.",
+          "Drops are temporary and are removed after they expire.",
+        ])}
 
-        <h2 class="text-base font-semibold text-white">PINs and passwords</h2>
-        <p>PINs on locked drops and account passwords are never stored in plain text. Each is combined with a random per-item salt and passed through an HMAC-SHA256 one-way hash -- we cannot read your PIN or password back out, only verify a match.</p>
+        ${legalList("What we keep", "Depending on how you use AirText, we may keep:", [
+          "<strong>Your drops</strong> -- the text, files, title, expiry time and any PIN or open-once setting you chose.",
+          "<strong>Account details</strong> (only if you have an account) -- your name, email address, plan and a protected form of your password.",
+          "<strong>Basic usage figures</strong> -- things like the type of device, how a drop was opened and which feature was used, with no names attached.",
+          "<strong>Feedback</strong> -- the message you send and, only if you choose, an email address for a reply.",
+          "<strong>Safety records</strong> -- short-lived records of failed attempts and important account actions, used to keep the service secure.",
+        ])}
 
-        <h2 class="text-base font-semibold text-white">Client-side encryption</h2>
-        <p>For PIN-locked notes, when enabled for your plan, choose "Encrypt in this browser" to encrypt text with AES-256-GCM and a random key. The full share link carries the key in its URL fragment; the key is not sent in HTTP requests. A share code alone cannot decrypt the text. PIN access control is separate. Titles and expiry metadata remain visible to the service. Losing the key means losing access; owner and admin accounts cannot recover it. Keys are remembered only for the current browser tab session. The service delivers the browser application, so this does not protect against a compromised service changing that application.</p>
+        ${legalBlock("Anonymous and signed-in drops", [
+          "Drops made without an account are not linked to who you are. Your browser remembers which drops it created so you can manage them.",
+          "If you are signed in, your drops are linked to your account so you can manage them from any device. Your display name and badge may be shown next to the drops you share.",
+        ])}
 
-        <h2 class="text-base font-semibold text-white">IP addresses and analytics</h2>
-        <p>We keep basic, privacy-safe usage analytics (device type, access method, feature used) to understand how AirText is used. Your IP address is never stored raw -- it is combined with the date and one-way hashed before anything is written, and that hash cannot be reversed back into an IP address. The same hashing applies to the "network" grouping used to show what's nearby on your Wi-Fi.</p>
+        ${legalBlock("PINs and passwords", [
+          "PINs and passwords are stored in a scrambled form that cannot be turned back into the original. We can check whether a PIN or password is right, but we cannot tell you what it is. This also means a forgotten PIN cannot be recovered.",
+        ])}
 
-        <h2 class="text-base font-semibold text-white">Automatic deletion</h2>
-        <p>Every drop has an expiry time shown as a countdown. Once it passes, the drop becomes unavailable. Stored data is removed by scheduled cleanup; storage failures are retried. Audit logs keep metadata for 30 days and exclude note bodies. Operational backups may retain older data temporarily. Drops can also be set to delete themselves immediately after they're opened once ("Open once"), or deleted manually by their owner beforehand.</p>
+        ${legalBlock("Extra encryption", [
+          "Where it is available, you can encrypt your text on your own device before it is sent. The key stays in the full link you share, not on our side, so a code on its own cannot unlock it. If the key is lost, the text cannot be recovered by anyone, including us.",
+          "Titles and expiry times are not encrypted. Because the service provides the page you use, this option cannot protect against the service itself being tampered with.",
+        ])}
 
-        <h2 class="text-base font-semibold text-white">Cookies</h2>
-        <p>Signing in to a Pro/Member account or the admin panel sets one HTTP-only, secure session cookie used only to keep you signed in. We do not use cookies for advertising or cross-site tracking, and we do not load any third-party trackers, ad scripts or analytics from other companies -- everything AirText needs (including the QR and scanner libraries) is served from our own domain.</p>
+        ${legalBlock("Your network and Nearby", [
+          "To show you drops shared on your Wi-Fi, we group visitors by their internet connection. We never keep your IP address in a readable form. It is scrambled before it is used, and the result cannot be turned back into an address.",
+          "Nearby shows only titles, type and who shared a drop, not the contents. People on the same connection see the same list, so use a PIN on shared or public networks.",
+        ])}
 
-        <h2 class="text-base font-semibold text-white">Feedback</h2>
-        <p>The feedback form stores your message and, if you choose to provide one, an email address so we can follow up. It is optional.</p>
+        ${legalBlock("How we use information", [
+          "We use it only to run AirText: to deliver drops, keep accounts working, prevent misuse, fix problems and understand which features are useful. We do not sell it, rent it or use it for advertising.",
+        ])}
 
-        <h2 class="text-base font-semibold text-white">Questions</h2>
-        <p>If you have a question about this policy, use the feedback form linked in the menu below.</p>
+        ${legalBlock("How long we keep things", [
+          "Drops are removed after their expiry time, or sooner if you delete them or they were set to open once. Cleanup runs automatically and is retried if it fails.",
+          "Safety and activity records are kept for a short period, around 30 days, and never include the text of your drops. Backups that exist for reliability may hold older data briefly before they are cleared.",
+          "Account details stay until the account is removed. Feedback is kept until it has been dealt with.",
+        ])}
+
+        ${legalBlock("Cookies and storage", [
+          "If you sign in, we set one secure cookie to keep you signed in. Your browser also stores small items so it can remember the drops you created and your theme choice. Signing out clears the saved drop shortcuts.",
+          "We do not use advertising cookies, cross-site tracking or third-party trackers. Everything AirText needs is served from our own site.",
+        ])}
+
+        ${legalBlock("Who can see your information", [
+          "Administrators can manage accounts and see technical details such as sizes and expiry times, but cannot read the content of your drops. We may share information if the law requires it, or to protect the service and its users from serious abuse.",
+          "AirText runs on a trusted cloud hosting provider that stores and delivers data on our behalf.",
+        ])}
+
+        ${legalList("Your choices", "You are in control of what you share:", [
+          "Delete any drop you created at any time.",
+          "Use a PIN, open-once or a shorter expiry to limit who sees a drop and for how long.",
+          "Sign out on shared devices.",
+          "Ask us, using the feedback form, about your account details or to have your account removed.",
+        ])}
+
+        ${legalBlock("Security", [
+          "We use sensible safeguards such as secure connections, protected passwords, request limits and automatic expiry. No online service can promise perfect security, so please do not share anything you cannot risk losing.",
+        ])}
+
+        ${legalBlock("Children", [
+          "AirText is not aimed at young children. If you believe a child has shared personal details with us, tell us and we will remove them.",
+        ])}
+
+        ${legalBlock("Changes to this policy", [
+          "We may update this page as AirText changes. The date at the top shows when it was last revised. Continuing to use AirText means you accept the current version.",
+        ])}
+
+        ${legalBlock("Questions", [
+          "If you have a question about this policy, use the feedback form linked in the menu below.",
+        ])}
       </div>
     </div>`;
 }
@@ -1482,26 +1642,74 @@ function pageTermsContent(): string {
   return String.raw`<div class="mx-auto max-w-3xl">
       <p class="hero-kicker">Legal</p>
       <h1 class="mt-2 text-3xl font-bold text-white sm:text-4xl">Terms of service</h1>
+      <p class="mt-2 text-xs text-slate-500">Last updated: November 2026</p>
       <div class="mt-6 grid gap-5 text-sm leading-7 text-slate-400">
-        <p>AirText is a free, temporary sharing tool. By using it, you agree to the following.</p>
+        <p>AirText is a free, temporary sharing tool. By using it you agree to these terms. If you do not agree, please do not use the service.</p>
 
-        <h2 class="text-base font-semibold text-white">Acceptable use</h2>
-        <p>Don't use AirText to share illegal content, malware, or material that infringes someone else's rights, and don't try to abuse, overload or circumvent the service's limits or protections.</p>
+        ${legalBlock("Using AirText", [
+          "You may use AirText to send and receive text and files for lawful, personal or business purposes. You must be old enough to form a binding agreement where you live, or have a parent or guardian's permission.",
+        ])}
 
-        <h2 class="text-base font-semibold text-white">Your content, your responsibility</h2>
-        <p>You're responsible for whatever you share, whether anonymously or through an account. AirText does not review drop contents before they're shared, and admins cannot see drop contents at all -- only metadata such as size and expiry.</p>
+        ${legalList("Acceptable use", "You agree not to use AirText to:", [
+          "Share anything illegal, harmful, threatening, abusive or hateful.",
+          "Share malware, or content designed to damage or break into other people's devices or accounts.",
+          "Share material that infringes copyright, privacy or other rights, or that you have no right to share.",
+          "Share private information about other people without their permission.",
+          "Send spam, scams or misleading content.",
+          "Try to guess codes or PINs, access other people's drops, or bypass limits and protections.",
+          "Overload, disrupt or reverse engineer the service, or use automated tools to abuse it.",
+        ])}
 
-        <h2 class="text-base font-semibold text-white">No warranty</h2>
-        <p>AirText is provided "as is," with no guarantee of uptime, delivery, or that a drop will survive exactly until its shown expiry. Don't rely on it for anything you can't afford to lose.</p>
+        ${legalBlock("Your content, your responsibility", [
+          "You are responsible for everything you share, whether through an account or without one. We do not review drops before they are shared and administrators cannot read their contents. You confirm that you have the right to share what you upload.",
+          "You keep ownership of your content. You give us only the permission needed to store it, deliver it to the people you share it with, and delete it when it expires.",
+        ])}
 
-        <h2 class="text-base font-semibold text-white">Accounts</h2>
-        <p>Pro and Member accounts are created by an administrator; there is no public signup. An admin may disable or remove an account at their discretion.</p>
+        ${legalBlock("Links, codes and PINs", [
+          "Anyone who has the link or code of an unlocked drop can open it. Anyone who also knows the PIN can open a locked one. Keeping them safe is up to you. We cannot recover lost PINs or lost encryption keys.",
+          "Open-once drops are removed after their first recipient opens them and cannot be brought back.",
+        ])}
 
-        <h2 class="text-base font-semibold text-white">Changes to the service</h2>
-        <p>AirText may change, add, remove or discontinue features -- including this one -- at any time, without notice.</p>
+        ${legalBlock("Nearby", [
+          "Drops shared on your network may appear in Nearby to other people using the same internet connection. Please think before sharing on public or shared networks and use a PIN where needed.",
+        ])}
 
-        <h2 class="text-base font-semibold text-white">Contact</h2>
-        <p>Questions about these terms can be sent through the feedback form linked in the menu below.</p>
+        ${legalBlock("Temporary storage", [
+          "Drops are removed automatically when they expire and may also be removed earlier for safety or maintenance. AirText is meant for passing things along, not for keeping them. Always keep your own copy of anything important.",
+        ])}
+
+        ${legalBlock("Limits", [
+          "File size, number of files, storage, lifetime and request limits apply and may differ by plan. We may change them at any time to keep the service fair and reliable.",
+        ])}
+
+        ${legalBlock("Accounts", [
+          "Accounts are created by an administrator and there is no public sign-up. Keep your password private and tell us if you think someone else has used your account. You are responsible for activity under your account.",
+          "We may disable, change or remove an account, for example for misuse, inactivity or to protect the service.",
+        ])}
+
+        ${legalBlock("Removing content and ending access", [
+          "We may remove any drop, or block access to AirText, if we believe these terms have been broken, the law requires it, or it is needed to protect people or the service. We may do this without notice.",
+        ])}
+
+        ${legalBlock("No warranty", [
+          "AirText is provided \"as is\" and \"as available\". We do not promise it will always be available, error free or secure, that a drop will be delivered, or that it will last until the countdown ends. Do not rely on it for anything you cannot afford to lose.",
+        ])}
+
+        ${legalBlock("Limit of liability", [
+          "To the fullest extent the law allows, we are not responsible for lost or exposed data, missed deliveries, downtime or any indirect or consequential loss arising from your use of AirText. Nothing in these terms limits rights you have that cannot be limited by law.",
+        ])}
+
+        ${legalBlock("Privacy", [
+          "Our Privacy policy explains what we keep and why. It forms part of these terms.",
+        ])}
+
+        ${legalBlock("Changes to the service and these terms", [
+          "We may change, add, pause or end features, or update these terms, at any time. The date at the top shows the latest revision. Continuing to use AirText after a change means you accept it.",
+        ])}
+
+        ${legalBlock("Contact", [
+          "Questions about these terms can be sent through the feedback form linked in the menu below.",
+        ])}
       </div>
     </div>`;
 }
@@ -1688,7 +1896,7 @@ const APP_SHELL = `<!doctype html>
 
   ${SIDE_DRAWER}
 
-  ${ADMIN_APP_SECTION}
+  __ADMIN_APP_SECTION__
 
   ${SHARED_MODALS}
 
@@ -1760,6 +1968,7 @@ export function renderPage(settings: SiteSettings, options: RenderPageOptions): 
     // tokens that still need to be replaced afterwards.
     "__MAIN_CONTENT__": getMainContentForPath(options.canonicalPath),
     "__RECENT_DROPS__": ["/", "/text", "/files"].includes(options.canonicalPath) ? '<section id="recent-drops" class="mx-auto mt-8 max-w-4xl" hidden></section>' : "",
+    "__ADMIN_APP_SECTION__": options.initialAdmin ? ADMIN_APP_SECTION : "",
     "__NAV_AUTH_SLOT__": renderNavAuthSlot(options.viewer),
     "__APP_NAME__": escapeHtml(settings.appName),
     "__SEO_TITLE__": escapeHtml(seoTitle),

@@ -30,9 +30,11 @@ describe("V3 public HTML routes", () => {
       const html = await response.text();
       expect(html).toContain(`<title>${route.titleContains}`);
       expect(html).toContain(`href="https://example.com${route.path}"`);
-      // Every public route shares the icon sprite and the new nav.
+      // Every public route shares the icon sprite and the new nav, and omits the admin panel DOM.
       expect(html).toContain('id="i-logo"');
       expect(html).toContain('__AIRTEXT_BOOT__');
+      expect(html).not.toContain('id="admin-app"');
+      expect(html).not.toContain('id="admin-dashboard"');
     });
   }
 
@@ -63,6 +65,7 @@ describe("V3 public HTML routes", () => {
     // marquee ticker are gone -- Nearby now lives at its own /nearby route.
     expect(html).not.toContain('id="notes-section"');
     expect(html).not.toContain('id="ticker-section"');
+    expect(html).not.toContain('id="admin-app"');
     expect(html).toContain('"initialAdmin":false');
   });
 
@@ -72,6 +75,7 @@ describe("V3 public HTML routes", () => {
     const html = await response.text();
     expect(html).toContain('"initialAdmin":true');
     expect(html).toContain('id="admin-login-form"');
+    expect(html).toContain('id="admin-app"');
   });
 
   it("GET /account still renders with initialAccount true", async () => {
@@ -80,6 +84,7 @@ describe("V3 public HTML routes", () => {
     const html = await response.text();
     expect(html).toContain('"initialAccount":true');
     expect(html).toContain('id="account-login-form"');
+    expect(html).not.toContain('id="admin-app"');
   });
 
   it("GET /s/:code and /f/:code still 200 with the matching boot flags, unchanged", async () => {

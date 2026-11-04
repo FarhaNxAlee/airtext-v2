@@ -8,7 +8,7 @@ import { readJsonBody } from "../src/lib/http";
 
 async function adminCookie() {
   const role = await env.DB.prepare("SELECT id FROM roles WHERE rank=0").first<{id:number}>();
-  await env.DB.prepare("INSERT INTO users (id,email,password_salt,password_hash,display_name,role_id,status,created_at) VALUES ('hardening-admin','hardening@example.test','unused','unused','Audit',?,'active',?)").bind(role!.id, Date.now()).run();
+  await env.DB.prepare("INSERT OR REPLACE INTO users (id,email,password_salt,password_hash,display_name,role_id,status,created_at) VALUES ('hardening-admin','hardening@example.test','unused','unused','Audit',?,'active',?)").bind(role!.id, Date.now()).run();
   return `__Host-airtext_session=${await createSessionToken(env.APP_SECRET, "hardening-admin", 0)}`;
 }
 
@@ -64,5 +64,106 @@ describe("security guarantees", () => {
     const result = await readJsonBody(request, 10);
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.response.status).toBe(413);
+  });
+
+  it("blocks cross-origin and cross-site state-changing API requests (CSRF protection)", async () => {
+    const crossOrigin = await SELF.fetch("https://example.com/api/items", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "origin": "https://evil.example"
+      },
+      body: JSON.stringify({ title: "CSRF", text: "nope" })
+    });
+    expect(crossOrigin.status).toBe(403);
+    expect(((await crossOrigin.json()) as { code: string }).code).toBe("CSRF_ORIGIN_MISMATCH");
+
+    const crossSiteFetch = await SELF.fetch("https://example.com/api/items", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "sec-fetch-site": "cross-site"
+      },
+      body: JSON.stringify({ title: "CSRF", text: "nope" })
+    });
+    expect(crossSiteFetch.status).toBe(403);
+    expect(((await crossSiteFetch.json()) as { code: string }).code).toBe("CSRF_CROSS_SITE");
+  });
+
+  it("prevents prefetchers and cross-site subresource embeds from consuming burn-after-read drops", async () => {
+    const create = await SELF.fetch("https://example.com/api/items", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ title: "SafeOnce", text: "still-here", burnAfterRead: true })
+    });
+    const created = (await create.json()) as { item: { id: string; code: string } };
+
+    const prefetch = await SELF.fetch(`https://example.com/api/share/${created.item.code}`, {
+      headers: { "sec-purpose": "prefetch" }
+    });
+    expect(prefetch.status).toBe(403);
+    expect(((await prefetch.json()) as { code: string }).code).toBe("UNSAFE_OPEN_CONTEXT");
+
+    const crossSiteImg = await SELF.fetch(`https://example.com/api/share/${created.item.code}`, {
+      headers: { "sec-fetch-site": "cross-site", "sec-fetch-dest": "image" }
+    });
+    expect(crossSiteImg.status).toBe(403);
+
+    const realOpen = await SELF.fetch(`https://example.com/api/share/${created.item.code}`);
+    expect(realOpen.status).toBe(200);
+    expect(((await realOpen.json()) as { item: { text: string } }).item.text).toBe("still-here");
+  });
+
+  it("binds account-owned drops to the authenticated user session and rejects signed-out delete tokens", async () => {
+    const cookie = await adminCookie();
+    const create = await SELF.fetch("https://example.com/api/items", {
+      method: "POST",
+      headers: { "content-type": "application/json", cookie },
+      body: JSON.stringify({ title: "Admin Drop", text: "Owned by account" })
+    });
+    expect(create.status).toBe(201);
+    const created = (await create.json()) as { item: { id: string; code: string; isOwner: boolean }; deleteToken: string };
+    expect(created.item.isOwner).toBe(true);
+
+    const anonNearby = await SELF.fetch("https://example.com/api/local/items");
+    const anonList = (await anonNearby.json()) as { items: Array<{ id: string; isOwner: boolean }> };
+    const foundAnon = anonList.items.find((entry) => entry.id === created.item.id);
+    expect(foundAnon?.isOwner).toBe(false);
+
+    const spoofPatch = await SELF.fetch(`https://example.com/api/item/${created.item.id}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ title: "Hijacked", deleteToken: created.deleteToken })
+    });
+    expect(spoofPatch.status).toBe(403);
+    expect(((await spoofPatch.json()) as { code: string }).code).toBe("OWNER_AUTH_REQUIRED");
+
+    const spoofDelete = await SELF.fetch(`https://example.com/api/item/${created.item.id}`, {
+      method: "DELETE",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ deleteToken: created.deleteToken })
+    });
+    expect(spoofDelete.status).toBe(403);
+
+    const ownerDelete = await SELF.fetch(`https://example.com/api/item/${created.item.id}`, {
+      method: "DELETE",
+      headers: { "content-type": "application/json", cookie },
+      body: JSON.stringify({})
+    });
+    expect(ownerDelete.status).toBe(200);
+  });
+
+  it("rate-limits brute-force share code enumeration after 10 misses", async () => {
+    for (let i = 0; i < 10; i += 1) {
+      const miss = await SELF.fetch(`https://example.com/api/share/MISS${i}`, {
+        headers: { "cf-connecting-ip": "198.51.100.77" }
+      });
+      expect(miss.status).toBe(404);
+    }
+    const blocked = await SELF.fetch("https://example.com/api/share/MISS99", {
+      headers: { "cf-connecting-ip": "198.51.100.77" }
+    });
+    expect(blocked.status).toBe(429);
+    expect(((await blocked.json()) as { code: string }).code).toBe("SHARE_RATE_LIMIT");
   });
 });

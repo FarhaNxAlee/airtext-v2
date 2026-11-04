@@ -148,10 +148,86 @@ export async function getClientIpHash(request: Request, secret: string): Promise
   return digest.slice(0, 32);
 }
 
-/** A room/IP match is never ownership. The opaque creator token is a capability. */
+/** A room/IP match is never ownership. Account-owned drops require an active
+ *  authenticated session for that user; anonymous drops use the creator token. */
 export async function isDropOwner(request: Request, env: Env, userId: string | null, tokenHash: string): Promise<boolean> {
+  if (userId) {
+    const user = await getAuthenticatedUser(request, env);
+    return Boolean(user && user.id === userId);
+  }
   const token = request.headers.get("x-airtext-owner");
-  if (token && constantTimeEqual(await hmacHex(env.APP_SECRET, `delete:${token}`), tokenHash)) return true;
-  const user = userId ? await getAuthenticatedUser(request, env) : null;
-  return Boolean(user && user.id === userId);
+  return Boolean(token && constantTimeEqual(await hmacHex(env.APP_SECRET, `delete:${token}`), tokenHash));
 }
+
+/** Authorizes editing or deleting a drop on `/api/item/:id` and `/api/file/:id`.
+ *  - Account-owned drops (`userId !== null`) require an active session for `userId`
+ *    (a leftover localStorage token after logout cannot edit or delete an account drop,
+ *    and a signed-in owner can edit/delete from any device without needing localStorage).
+ *  - Anonymous drops (`userId === null`) require the matching creator `deleteToken`. */
+export async function authorizeDropMutation(
+  request: Request,
+  env: Env,
+  userId: string | null,
+  tokenHash: string,
+  suppliedToken: string,
+  actionVerb: "edit" | "delete",
+  resourceNoun: "note" | "file",
+): Promise<{ ok: true; by: "owner" | "creator"; user: AuthenticatedUser | null } | { ok: false; response: Response }> {
+  const user = await getAuthenticatedUser(request, env);
+  if (userId) {
+    if (user && user.id === userId) {
+      return { ok: true, by: "owner", user };
+    }
+    return {
+      ok: false,
+      response: jsonError(
+        `Sign in as the owner of this ${resourceNoun} to ${actionVerb} it.`,
+        403,
+        "OWNER_AUTH_REQUIRED",
+      ),
+    };
+  }
+  const token = suppliedToken || request.headers.get("x-airtext-owner") || "";
+  if (!token) {
+    return { ok: false, response: jsonError("Delete token is required.", 401, "DELETE_TOKEN_REQUIRED") };
+  }
+  const suppliedHash = await hmacHex(env.APP_SECRET, `delete:${token}`);
+  if (!constantTimeEqual(suppliedHash, tokenHash)) {
+    return {
+      ok: false,
+      response: jsonError(
+        `You can ${actionVerb} this ${resourceNoun} only from the browser that created it.`,
+        403,
+        "INVALID_DELETE_TOKEN",
+      ),
+    };
+  }
+  return { ok: true, by: "creator", user };
+}
+
+const UNSAFE_FETCH_DESTS = new Set(["image", "script", "style", "video", "audio", "iframe", "object", "embed"]);
+
+/** Rejects link-prefetchers, preview bots, and cross-site subresource embeds from
+ *  consuming burn-after-read drops or reading encrypted drops. */
+export function isSafeDropOpenRequest(request: Request): boolean {
+  const purpose = (
+    request.headers.get("purpose") ||
+    request.headers.get("sec-purpose") ||
+    request.headers.get("x-purpose") ||
+    request.headers.get("x-moz") ||
+    ""
+  ).toLowerCase();
+  if (purpose.includes("prefetch") || purpose.includes("preview") || purpose.includes("prerender")) {
+    return false;
+  }
+  const fetchSite = (request.headers.get("sec-fetch-site") || "").toLowerCase();
+  if (fetchSite === "cross-site") {
+    return false;
+  }
+  const fetchDest = (request.headers.get("sec-fetch-dest") || "").toLowerCase();
+  if (fetchDest && UNSAFE_FETCH_DESTS.has(fetchDest)) {
+    return false;
+  }
+  return true;
+}
+

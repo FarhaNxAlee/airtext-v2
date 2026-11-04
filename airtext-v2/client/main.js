@@ -1,6 +1,6 @@
 import "./style.css";
 import { COPY } from "./copy.js";
-import { encryptText, decryptItem, keyForCode, storeKey, rememberLinkKey, withKey } from "./encryption.js";
+import { encryptText, decryptItem, keyForCode, storeKey, clearStoredKeys, rememberLinkKey, withKey } from "./encryption.js";
 import { rememberDrop, recentDrops, forgetDrop, renderRecentDrops, renderNearbyBoard, addSmartTools, addFileTools, uploadRequest } from "./features.js";
 
 (function () {
@@ -574,9 +574,15 @@ import { rememberDrop, recentDrops, forgetDrop, renderRecentDrops, renderNearbyB
           if (action === "close-item-modal") closeItemModal();
           if (action === "close-file-modal") closeFileModal();
           if (action === "close-qr-modal") closeQrModal();
-          if (action === "open-edit-item-modal" && state.currentItem) openEditItemModal(state.currentItem.id, "anonymous", state.currentItem);
+          if (action === "open-edit-item-modal" && state.currentItem) {
+            var itemTier = state.currentItem.sharedBy && state.currentItem.isOwner ? "owner" : "anonymous";
+            openEditItemModal(state.currentItem.id, itemTier, state.currentItem);
+          }
           if (action === "close-edit-item-modal") closeEditItemModal();
-          if (action === "open-edit-file-modal" && state.currentFile) openEditFileModal(state.currentFile.id, "anonymous", state.currentFile);
+          if (action === "open-edit-file-modal" && state.currentFile) {
+            var fileTier = state.currentFile.sharedBy && state.currentFile.isOwner ? "owner" : "anonymous";
+            openEditFileModal(state.currentFile.id, fileTier, state.currentFile);
+          }
           if (action === "close-edit-file-modal") closeEditFileModal();
           var removeEditFileId = actionElement.getAttribute("data-remove-file-id");
           if (action === "remove-edit-file" && removeEditFileId) toggleEditFileRemoval(removeEditFileId);
@@ -789,10 +795,11 @@ import { rememberDrop, recentDrops, forgetDrop, renderRecentDrops, renderNearbyB
         var query = String(el.notesSearch.value || "").trim().toLowerCase();
         var filter = el.notesFilter.value || "all";
         var visibleItems = state.items.filter(function (item) {
+          var isMine = item.sharedBy ? Boolean(item.isOwner) : Boolean(item.isOwner || getDeleteToken(item.id));
           var matchesText = !query || String(item.title || "").toLowerCase().indexOf(query) !== -1 ||
             String(item.code || "").toLowerCase().indexOf(query) !== -1;
           var matchesFilter = filter === "all" ||
-            (filter === "mine" && (item.isOwner || getDeleteToken(item.id))) ||
+            (filter === "mine" && isMine) ||
             (filter === "received" && item.source === "received") ||
             (filter === "open" && !item.locked) ||
             (filter === "locked" && item.locked);
@@ -816,6 +823,7 @@ import { rememberDrop, recentDrops, forgetDrop, renderRecentDrops, renderNearbyB
         el.boardList.classList.remove("hidden");
 
         visibleItems.forEach(function (item) {
+          var isMine = item.sharedBy ? Boolean(item.isOwner) : Boolean(item.isOwner || getDeleteToken(item.id));
           var card = document.createElement("article");
           card.className = "note-row";
 
@@ -825,8 +833,8 @@ import { rememberDrop, recentDrops, forgetDrop, renderRecentDrops, renderNearbyB
           var meta = document.createElement("div");
           meta.className = "note-meta";
           var sourceBadge = document.createElement("span");
-          sourceBadge.className = "note-badge " + (item.source === "received" ? "badge-received" : "badge-mine");
-          sourceBadge.textContent = item.isOwner || getDeleteToken(item.id) || getDeleteToken("file:" + item.id) ? "Mine" : "Nearby";
+          sourceBadge.className = "note-badge " + (!isMine ? "badge-received" : "badge-mine");
+          sourceBadge.textContent = isMine ? "Mine" : "Nearby";
           var lockBadge = document.createElement("span");
           lockBadge.className = "note-badge" + (item.locked ? " badge-locked" : "");
           lockBadge.textContent = item.locked ? "PIN locked" : "Open";
@@ -887,7 +895,10 @@ import { rememberDrop, recentDrops, forgetDrop, renderRecentDrops, renderNearbyB
         openItemModal();
 
         try {
-          var response = await apiFetch("/api/local/item/" + encodeURIComponent(itemId));
+          var token = getDeleteToken(itemId);
+          var response = await apiFetch("/api/local/item/" + encodeURIComponent(itemId), {
+            headers: token ? { "x-airtext-owner": token } : {}
+          });
           showItemResponse(response.item, "local", null);
         } catch (error) {
           showModalError(error.message || "Unable to open this item.");
@@ -970,17 +981,17 @@ import { rememberDrop, recentDrops, forgetDrop, renderRecentDrops, renderNearbyB
           el.unlockForm.classList.add("hidden");
           el.modalContent.classList.remove("hidden");
           if (item.sharedBy) {
-            el.modalSharedBy.textContent = "Shared by " + item.sharedBy.name + " · " + item.sharedBy.role;
+            renderModalSharedBy(el.modalSharedBy, item.sharedBy);
             el.modalSharedBy.classList.remove("hidden");
           } else {
             el.modalSharedBy.classList.add("hidden");
           }
           renderLinkedText(el.modalText, item.text);
           addSmartTools(el.modalText, item.text, copyText, toast);
-          updateDeleteButton(item.id);
+          updateDeleteButton(item.id, item);
           if (source === "share" && !item.burnAfterRead && !item.encrypted) {
             upsertLocalItem(Object.assign({}, item, {
-              source: getDeleteToken(item.id) ? "mine" : "received",
+              source: canManageItem(item) ? "mine" : "received",
               addedAt: Date.now()
             }), true);
             renderLocalItems();
@@ -1028,7 +1039,7 @@ import { rememberDrop, recentDrops, forgetDrop, renderRecentDrops, renderNearbyB
       async function deleteCurrentItem() {
         if (!state.currentItem) return;
         var token = getDeleteToken(state.currentItem.id);
-        if (!token) return toast("This browser does not own the delete token.", "error");
+        if (!token && !canManageItem(state.currentItem)) return toast("You do not have permission to delete this share.", "error");
         if (!window.confirm("Delete this share now? This cannot be undone.")) return;
 
         el.deleteButton.disabled = true;
@@ -1036,12 +1047,13 @@ import { rememberDrop, recentDrops, forgetDrop, renderRecentDrops, renderNearbyB
           await apiFetch("/api/item/" + encodeURIComponent(state.currentItem.id), {
             method: "DELETE",
             headers: { "content-type": "application/json" },
-            body: JSON.stringify({ deleteToken: token })
+            body: JSON.stringify({ deleteToken: token || undefined })
           });
           removeDeleteToken(state.currentItem.id);
           delete state.optimisticItems[state.currentItem.id];
           state.items = state.items.filter(function (item) { return item.id !== state.currentItem.id; });
           renderLocalItems();
+          if (el.accountNotesList) await loadAccountShares();
           closeItemModal();
           toast("Share deleted.", "success");
         } catch (error) {
@@ -1089,26 +1101,37 @@ import { rememberDrop, recentDrops, forgetDrop, renderRecentDrops, renderNearbyB
       }
 
       function setLockBadge(locked, error) {
-        el.modalLockBadge.className = "rounded border px-2 py-1 text-[10px] font-semibold uppercase tracking-wider";
+        el.modalLockBadge.className = "note-badge";
         if (error) {
-          el.modalLockBadge.classList.add("border-red-500/25", "bg-red-500/5", "text-red-300");
+          el.modalLockBadge.classList.add("badge-burn");
           el.modalLockBadge.textContent = "Unavailable";
         } else if (locked) {
-          el.modalLockBadge.classList.add("border-violet-500/25", "bg-[var(--accent)]/10", "text-[var(--accent)]");
+          el.modalLockBadge.classList.add("badge-locked");
           el.modalLockBadge.textContent = "PIN locked";
         } else {
-          el.modalLockBadge.classList.add("border-[var(--line)]", "bg-white/[.03]", "text-neutral-400");
           el.modalLockBadge.textContent = "Open text";
         }
       }
 
-      function updateDeleteButton(itemId) {
-        var token = getDeleteToken(itemId);
-        el.deleteButton.classList.toggle("hidden", !token);
-        el.deleteButton.classList.toggle("inline-flex", Boolean(token));
+      function canManageItem(item) {
+        if (!item) return false;
+        if (item.sharedBy) return Boolean(item.isOwner);
+        return Boolean(item.isOwner || getDeleteToken(item.id));
+      }
+
+      function canManageFile(group) {
+        if (!group) return false;
+        if (group.sharedBy) return Boolean(group.isOwner);
+        return Boolean(group.isOwner || getDeleteToken("file:" + group.id));
+      }
+
+      function updateDeleteButton(itemId, item) {
+        var allowed = item ? canManageItem(item) : Boolean(getDeleteToken(itemId));
+        el.deleteButton.classList.toggle("hidden", !allowed);
+        el.deleteButton.classList.toggle("inline-flex", Boolean(allowed));
         if (el.editItemButton) {
-          el.editItemButton.classList.toggle("hidden", !token);
-          el.editItemButton.classList.toggle("inline-flex", Boolean(token));
+          el.editItemButton.classList.toggle("hidden", !allowed);
+          el.editItemButton.classList.toggle("inline-flex", Boolean(allowed));
         }
       }
 
@@ -1280,9 +1303,12 @@ import { rememberDrop, recentDrops, forgetDrop, renderRecentDrops, renderNearbyB
 
           var meta = document.createElement("div");
           meta.className = "note-meta";
+          var isMine = item.sharedBy
+            ? Boolean(item.isOwner)
+            : Boolean(item.isOwner || getDeleteToken(item.id) || getDeleteToken("file:" + item.id));
           var sourceBadge = document.createElement("span");
-          sourceBadge.className = "note-badge " + (item.source === "received" ? "badge-received" : "badge-mine");
-          sourceBadge.textContent = item.isOwner || getDeleteToken(item.id) || getDeleteToken("file:" + item.id) ? "Mine" : "Nearby";
+          sourceBadge.className = "note-badge " + (!isMine && item.source === "received" ? "badge-received" : "badge-mine");
+          sourceBadge.textContent = isMine ? "Mine" : "Nearby";
           var lockBadge = document.createElement("span");
           lockBadge.className = "note-badge" + (item.locked ? " badge-locked" : "");
           lockBadge.textContent = item.locked ? "PIN locked" : "Open";
@@ -1344,7 +1370,10 @@ import { rememberDrop, recentDrops, forgetDrop, renderRecentDrops, renderNearbyB
         state.currentFileCode = null;
         openFileModal();
         try {
-          var response = await apiFetch("/api/local/file/" + encodeURIComponent(fileId));
+          var token = getDeleteToken("file:" + fileId);
+          var response = await apiFetch("/api/local/file/" + encodeURIComponent(fileId), {
+            headers: token ? { "x-airtext-owner": token } : {}
+          });
           showFileResponse(response.group, "local", null);
         } catch (error) {
           showFileModalError(error.message || "Unable to open this file.");
@@ -1388,17 +1417,17 @@ import { rememberDrop, recentDrops, forgetDrop, renderRecentDrops, renderNearbyB
           el.fileUnlockForm.classList.add("hidden");
           el.fileModalContent.classList.remove("hidden");
           if (group.sharedBy) {
-            el.fileModalSharedBy.textContent = "Shared by " + group.sharedBy.name + " · " + group.sharedBy.role;
+            renderModalSharedBy(el.fileModalSharedBy, group.sharedBy);
             el.fileModalSharedBy.classList.remove("hidden");
           } else {
             el.fileModalSharedBy.classList.add("hidden");
           }
           renderFileModalList(group.files);
           addFileTools(el.fileModalList, group.files, group, toast);
-          updateFileDeleteButton(group.id);
+          updateFileDeleteButton(group.id, group);
           if (source === "share" && !group.burnAfterRead) {
             upsertLocalFile(Object.assign({}, group, {
-              source: getDeleteToken("file:" + group.id) ? "mine" : "received",
+              source: canManageFile(group) ? "mine" : "received",
               addedAt: Date.now()
             }));
             renderFilesBoard();
@@ -1415,11 +1444,11 @@ import { rememberDrop, recentDrops, forgetDrop, renderRecentDrops, renderNearbyB
         el.fileModalList.textContent = "";
         files.forEach(function (file) {
           var row = document.createElement("div");
-          row.className = "flex items-center justify-between gap-3 overflow-hidden rounded-xl border border-white/[.07] bg-black/20 p-4";
+          row.className = "flex items-center justify-between gap-3 overflow-hidden rounded-xl border border-[var(--line)] bg-[var(--panel-soft)] p-4";
           var info = document.createElement("div");
           info.className = "min-w-0";
           var name = document.createElement("p");
-          name.className = "truncate text-sm text-slate-200";
+          name.className = "truncate text-sm font-semibold text-slate-200";
           name.textContent = file.filename;
           var meta = document.createElement("p");
           meta.className = "mt-1 text-xs text-neutral-500";
@@ -1429,7 +1458,7 @@ import { rememberDrop, recentDrops, forgetDrop, renderRecentDrops, renderNearbyB
           var download = document.createElement("a");
           download.href = file.downloadUrl;
           download.setAttribute("download", file.filename);
-          download.className = "shrink-0 rounded-md bg-[var(--accent)] px-4 py-2 text-center text-sm font-semibold text-white transition hover:bg-[var(--accent-strong)]";
+          download.className = "action-btn primary-action shrink-0 px-4 py-2 text-center text-xs font-bold";
           download.textContent = "Download";
           row.appendChild(info);
           row.appendChild(download);
@@ -1470,7 +1499,7 @@ import { rememberDrop, recentDrops, forgetDrop, renderRecentDrops, renderNearbyB
       async function deleteCurrentFile() {
         if (!state.currentFile) return;
         var token = getDeleteToken("file:" + state.currentFile.id);
-        if (!token) return toast("This browser does not own the delete token.", "error");
+        if (!token && !canManageFile(state.currentFile)) return toast("This browser does not own the delete token.", "error");
         if (!window.confirm("Delete this file now? This cannot be undone.")) return;
 
         el.deleteFileButton.disabled = true;
@@ -1478,11 +1507,12 @@ import { rememberDrop, recentDrops, forgetDrop, renderRecentDrops, renderNearbyB
           await apiFetch("/api/file/" + encodeURIComponent(state.currentFile.id), {
             method: "DELETE",
             headers: { "content-type": "application/json" },
-            body: JSON.stringify({ deleteToken: token })
+            body: JSON.stringify({ deleteToken: token || undefined })
           });
           removeDeleteToken("file:" + state.currentFile.id);
           state.files = state.files.filter(function (item) { return item.id !== state.currentFile.id; });
           renderFilesBoard();
+          if (el.accountFilesList) await loadAccountShares();
           closeFileModal();
           toast("File deleted.", "success");
         } catch (error) {
@@ -1632,13 +1662,14 @@ import { rememberDrop, recentDrops, forgetDrop, renderRecentDrops, renderNearbyB
           toast(response.message || "Note updated.", "success");
           closeEditItemModal();
           if (state.currentItem && state.currentItem.id === target.id) await showItemResponse(response.item, state.currentSource, response.item.code);
-          if (target.tier === "anonymous") {
+          if (target.tier === "anonymous" || target.tier === "owner") {
             var existing = state.items.find(function (entry) { return entry.id === target.id; });
             if (existing) Object.assign(existing, response.item);
             renderLocalItems();
-          } else if (target.tier === "owner") {
+          }
+          if (target.tier === "owner" && el.accountNotesList) {
             await loadAccountShares();
-          } else {
+          } else if (target.tier === "admin") {
             await loadAdminDrops();
           }
         } catch (error) {
@@ -1825,13 +1856,14 @@ import { rememberDrop, recentDrops, forgetDrop, renderRecentDrops, renderNearbyB
           if (state.currentFile && state.currentFile.id === target.id) showFileResponse(response.group, "owner", response.group.code);
           toast(response.message || "File updated.", "success");
           closeEditFileModal();
-          if (target.tier === "anonymous") {
+          if (target.tier === "anonymous" || target.tier === "owner") {
             var existing = state.files.find(function (entry) { return entry.id === target.id; });
             if (existing) Object.assign(existing, response.group);
             renderFilesBoard();
-          } else if (target.tier === "owner") {
+          }
+          if (target.tier === "owner" && el.accountFilesList) {
             await loadAccountShares();
-          } else {
+          } else if (target.tier === "admin") {
             await loadAdminDrops();
           }
         } catch (error) {
@@ -1896,26 +1928,25 @@ import { rememberDrop, recentDrops, forgetDrop, renderRecentDrops, renderNearbyB
       }
 
       function setFileLockBadge(locked, error) {
-        el.fileModalLockBadge.className = "rounded border px-2 py-1 text-[10px] font-semibold uppercase tracking-wider";
+        el.fileModalLockBadge.className = "note-badge";
         if (error) {
-          el.fileModalLockBadge.classList.add("border-red-500/25", "bg-red-500/5", "text-red-300");
+          el.fileModalLockBadge.classList.add("badge-burn");
           el.fileModalLockBadge.textContent = "Unavailable";
         } else if (locked) {
-          el.fileModalLockBadge.classList.add("border-violet-500/25", "bg-[var(--accent)]/10", "text-[var(--accent)]");
+          el.fileModalLockBadge.classList.add("badge-locked");
           el.fileModalLockBadge.textContent = "PIN locked";
         } else {
-          el.fileModalLockBadge.classList.add("border-[var(--line)]", "bg-white/[.03]", "text-neutral-400");
           el.fileModalLockBadge.textContent = "Open file";
         }
       }
 
-      function updateFileDeleteButton(fileId) {
-        var token = getDeleteToken("file:" + fileId);
-        el.deleteFileButton.classList.toggle("hidden", !token);
-        el.deleteFileButton.classList.toggle("inline-flex", Boolean(token));
+      function updateFileDeleteButton(fileId, group) {
+        var allowed = group ? canManageFile(group) : Boolean(getDeleteToken("file:" + fileId));
+        el.deleteFileButton.classList.toggle("hidden", !allowed);
+        el.deleteFileButton.classList.toggle("inline-flex", allowed);
         if (el.editFileButton) {
-          el.editFileButton.classList.toggle("hidden", !token);
-          el.editFileButton.classList.toggle("inline-flex", Boolean(token));
+          el.editFileButton.classList.toggle("hidden", !allowed);
+          el.editFileButton.classList.toggle("inline-flex", allowed);
         }
       }
 
@@ -2608,10 +2639,21 @@ import { rememberDrop, recentDrops, forgetDrop, renderRecentDrops, renderNearbyB
         }
       }
 
+      function clearBrowserOwnershipState() {
+        try {
+          localStorage.removeItem("airtext_owner_tokens");
+          localStorage.removeItem("airtext_recent_drops");
+          localStorage.removeItem("airtext_history_v31");
+        } catch (error) {}
+        clearStoredKeys();
+        refreshRecentDrops();
+      }
+
       async function signOutFromNav() {
         try {
           await apiFetch("/api/auth/logout", { method: "POST" });
         } catch (error) {}
+        clearBrowserOwnershipState();
         window.location.href = "/";
       }
 
@@ -2660,6 +2702,7 @@ import { rememberDrop, recentDrops, forgetDrop, renderRecentDrops, renderNearbyB
         try {
           await apiFetch("/api/auth/logout", { method: "POST" });
         } catch (error) {}
+        clearBrowserOwnershipState();
         el.accountDashboard.classList.add("hidden");
         el.accountSigninCard.classList.remove("hidden");
         if (el.accountBenefitsCard) el.accountBenefitsCard.classList.remove("hidden");
@@ -2976,6 +3019,7 @@ import { rememberDrop, recentDrops, forgetDrop, renderRecentDrops, renderNearbyB
             headers: { "content-type": "application/json" },
             body: JSON.stringify({ currentPassword: currentPassword, newPassword: newPassword })
           });
+          clearBrowserOwnershipState();
           el.accountPasswordForm.reset();
           el.accountPasswordStatus.textContent = "Password updated.";
           el.accountPasswordStatus.classList.remove("hidden");
@@ -3040,8 +3084,11 @@ import { rememberDrop, recentDrops, forgetDrop, renderRecentDrops, renderNearbyB
         try {
           await apiFetch("/api/admin/logout", { method: "POST" });
         } catch (error) {}
+        clearBrowserOwnershipState();
         el.adminDashboard.classList.add("hidden");
         el.adminLoginCard.classList.remove("hidden");
+        var loginWrap = document.getElementById("admin-login-wrap");
+        if (loginWrap) loginWrap.classList.remove("hidden");
         if (el.adminLoginHeader) el.adminLoginHeader.classList.remove("hidden-force");
         el.adminPassword.focus();
         toast("Signed out.", "success");
@@ -3049,6 +3096,8 @@ import { rememberDrop, recentDrops, forgetDrop, renderRecentDrops, renderNearbyB
 
       function showAdminDashboard() {
         el.adminLoginCard.classList.add("hidden");
+        var loginWrap = document.getElementById("admin-login-wrap");
+        if (loginWrap) loginWrap.classList.add("hidden");
         if (el.adminLoginHeader) el.adminLoginHeader.classList.add("hidden-force");
         el.adminDashboard.classList.remove("hidden");
         switchAdminTab("overview");
@@ -4137,6 +4186,23 @@ import { rememberDrop, recentDrops, forgetDrop, renderRecentDrops, renderNearbyB
         return badge;
       }
 
+      function renderModalSharedBy(container, sharedBy) {
+        if (!container) return;
+        container.textContent = "";
+        var prefix = document.createElement("span");
+        prefix.className = "modal-shared-by-label";
+        prefix.textContent = "Shared by ";
+        container.appendChild(prefix);
+        var badge = buildSharedByBadge(sharedBy, null);
+        if (badge) container.appendChild(badge);
+        if (sharedBy.role) {
+          var role = document.createElement("span");
+          role.className = "modal-shared-by-role";
+          role.textContent = " · " + sharedBy.role;
+          container.appendChild(role);
+        }
+      }
+
       function formatBytes(bytes) {
         var value = Number(bytes) || 0;
         if (value < 1024) return value + " B";
@@ -4937,12 +5003,12 @@ import { rememberDrop, recentDrops, forgetDrop, renderRecentDrops, renderNearbyB
         var container = document.getElementById("toast-container");
         var item = document.createElement("div");
         var isError = type === "error";
-        item.className = "toast-enter pointer-events-auto flex items-start gap-3 rounded-md border p-3 shadow-2xl " + (isError
-          ? "border-red-500/25 bg-[#2a1b1b] text-red-100"
-          : "border-violet-500/25 bg-[var(--panel)] text-violet-100");
+        item.className = "toast-enter pointer-events-auto flex items-start gap-3 rounded-lg border p-3.5 shadow-2xl " + (isError
+          ? "border-red-500/30 bg-[#2a1b1b] text-red-100"
+          : "border-[var(--line)] bg-[var(--panel)] text-[var(--text)]");
 
         var dot = document.createElement("span");
-        dot.className = "mt-1 h-2.5 w-2.5 shrink-0 rounded-full " + (isError ? "bg-red-400" : "bg-violet-400");
+        dot.className = "mt-1.5 h-2.5 w-2.5 shrink-0 rounded-full " + (isError ? "bg-red-400" : "bg-[var(--accent)]");
         var text = document.createElement("p");
         text.className = "flex-1 text-sm leading-6";
         text.textContent = message;
@@ -4971,6 +5037,7 @@ import { rememberDrop, recentDrops, forgetDrop, renderRecentDrops, renderNearbyB
       function recentActions() {
         return {
           owns: ownsDrop,
+          remaining: formatRemaining,
           open: openOwnedDrop,
           copy: function (item) { copyText(dropLink(item), "Share link copied."); },
           qr: function (item) { showQr(item.code, dropLink(item)); },

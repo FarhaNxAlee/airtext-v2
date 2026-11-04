@@ -8,8 +8,8 @@ import type { EffectiveLimits } from "../lib/limits";
 import { jsonResponse, jsonError, readJsonBody } from "../lib/http";
 import { hmacHex, hashPin, constantTimeEqual, randomBase64Url, randomShareCode } from "../lib/crypto";
 import { normalizeTitle, normalizeText, normalizeShareCode, formatServerDuration, isExpired } from "../lib/util";
-import { getRoomId, getClientIpHash, getAuthenticatedUser, isDropOwner } from "../middleware/auth";
-import { enforceCooldown } from "../middleware/rateLimit";
+import { getRoomId, getClientIpHash, getAuthenticatedUser, isDropOwner, authorizeDropMutation, isSafeDropOpenRequest } from "../middleware/auth";
+import { enforceCooldown, checkWindowLimit, recordWindowAttempt, enforceWindowLimit } from "../middleware/rateLimit";
 import { recordEvent } from "../lib/analytics";
 
 /** Ported from airtext-worker-modern.js:1621-1870 (the live `d1Handle*` note handlers).
@@ -155,7 +155,7 @@ async function reserveCustomShareCode(env: Env, requestedCode: string): Promise<
   return code;
 }
 
-function publicItemPayload(note: NoteRow, includeText: boolean) {
+function publicItemPayload(note: NoteRow, includeText: boolean, owner = false) {
   return {
     ok: true,
     item: {
@@ -167,6 +167,7 @@ function publicItemPayload(note: NoteRow, includeText: boolean) {
       expiresAt: Number(note.expiresAt),
       burnAfterRead: Boolean(note.burnAfterRead),
       encrypted: note.encrypted,
+      isOwner: owner,
       ...(note.encrypted ? { encryptionVersion: 1, encryptionIv: note.encryptionIv } : {}),
       ...(note.sharedBy ? { sharedBy: note.sharedBy } : {}),
       ...(includeText ? { text: note.text } : {}),
@@ -488,7 +489,7 @@ notesRoutes.post("/api/items", async (c) => {
     {
       ok: true,
       item: {
-        id, title, locked: wantsLock, burnAfterRead: wantsBurnAfterRead, encrypted, code, createdAt, addedAt: createdAt, expiresAt, source: "mine",
+        id, title, locked: wantsLock, burnAfterRead: wantsBurnAfterRead, encrypted, code, createdAt, addedAt: createdAt, expiresAt, isOwner: true, source: "mine",
         ...(user ? { sharedBy: { name: user.displayName, role: user.roleName, rank: user.rank } } : {}),
       },
       deleteToken,
@@ -515,7 +516,8 @@ notesRoutes.get("/api/local/item/:itemId", async (c) => {
   const note = rowToNote(row);
   if (!note) return jsonError("This note has expired or is not available on this network.", 404, "NOT_FOUND");
   await recordEvent(env, c.req.raw, "note_opened", { via: "network" });
-  return jsonResponse(publicItemPayload(note, !note.locked));
+  const owner = await isDropOwner(c.req.raw, env, note.userId, note.deleteTokenHash);
+  return jsonResponse(publicItemPayload(note, !note.locked, owner));
 });
 
 notesRoutes.post("/api/local/item/:itemId/unlock", async (c) => {
@@ -536,15 +538,32 @@ notesRoutes.post("/api/local/item/:itemId/unlock", async (c) => {
   const result = await verifyPin(c.req.raw, env, note);
   if (!result.ok) return result.response;
   await recordEvent(env, c.req.raw, "pin_unlocked", { via: "network" });
-  return jsonResponse(publicItemPayload(note, true));
+  const owner = await isDropOwner(c.req.raw, env, note.userId, note.deleteTokenHash);
+  return jsonResponse(publicItemPayload(note, true, owner));
 });
 
 notesRoutes.get("/api/share/:code", async (c) => {
   const env = c.env;
   const url = new URL(c.req.url);
+  const clientHash = await getClientIpHash(c.req.raw, env.APP_SECRET);
+  const missLimit = await checkWindowLimit(env, `share-miss:${clientHash}`, 10);
+  if (!missLimit.allowed) {
+    return jsonError(
+      `Too many invalid share code attempts. Please wait ${missLimit.retryAfter} second${missLimit.retryAfter === 1 ? "" : "s"} and try again.`,
+      429,
+      "SHARE_RATE_LIMIT",
+      { "retry-after": String(missLimit.retryAfter) },
+    );
+  }
   const settings = await getSiteSettings(env);
   const note = await getNoteByCode(env, c.req.param("code"));
-  if (!note) return jsonError("This share code is invalid or has expired.", 404, "CODE_NOT_FOUND");
+  if (!note) {
+    await recordWindowAttempt(env, `share-miss:${clientHash}`, 30);
+    return jsonError("This share code is invalid or has expired.", 404, "CODE_NOT_FOUND");
+  }
+  if ((note.burnAfterRead || note.encrypted) && !isSafeDropOpenRequest(c.req.raw)) {
+    return jsonError("This drop cannot be opened from a preview or cross-site embed.", 403, "UNSAFE_OPEN_CONTEXT");
+  }
   const via = normalizeAccessMethodParam(url);
   if (!note.locked && !note.burnAfterRead && !note.encrypted && settings.crossNetworkAddEnabled) {
     const roomId = await getRoomId(c.req.raw, env.APP_SECRET);
@@ -552,12 +571,21 @@ notesRoutes.get("/api/share/:code", async (c) => {
   }
   await recordEvent(env, c.req.raw, "shared_note_opened", { via, locked: note.locked });
   const decryptReady = !note.encrypted || c.req.header("x-airtext-decrypt-ready") === "1";
-  const payload = publicItemPayload(note, !note.locked && decryptReady);
   const owner = await isDropOwner(c.req.raw, env, note.userId, note.deleteTokenHash);
   if (!note.locked && decryptReady && note.burnAfterRead && !owner) {
+    const burnLimit = await enforceWindowLimit(env, `burn-consume:${clientHash}`, 10, 30);
+    if (!burnLimit.allowed) {
+      return jsonError(
+        `Please wait ${burnLimit.retryAfter} second${burnLimit.retryAfter === 1 ? "" : "s"} and try again.`,
+        429,
+        "SHARE_RATE_LIMIT",
+        { "retry-after": String(burnLimit.retryAfter) },
+      );
+    }
     const consumed = await env.DB.prepare("DELETE FROM notes WHERE id = ? AND burn_after_read = 1 RETURNING id").bind(note.id).first();
     if (!consumed) return jsonError("This drop has already been opened.", 404, "CODE_NOT_FOUND");
   }
+  const payload = publicItemPayload(note, !note.locked && decryptReady, owner);
   return jsonResponse(payload);
 });
 
@@ -567,6 +595,9 @@ notesRoutes.post("/api/share/:code/unlock", async (c) => {
   const settings = await getSiteSettings(env);
   const note = await getNoteByCode(env, c.req.param("code"));
   if (!note) return jsonError("This share code is invalid or has expired.", 404, "CODE_NOT_FOUND");
+  if ((note.burnAfterRead || note.encrypted) && !isSafeDropOpenRequest(c.req.raw)) {
+    return jsonError("This drop cannot be opened from a preview or cross-site embed.", 403, "UNSAFE_OPEN_CONTEXT");
+  }
   const result = await verifyPin(c.req.raw, env, note);
   if (!result.ok) return result.response;
   if (!note.burnAfterRead && !note.encrypted && settings.crossNetworkAddEnabled) {
@@ -575,8 +606,8 @@ notesRoutes.post("/api/share/:code/unlock", async (c) => {
   }
   await recordEvent(env, c.req.raw, "pin_unlocked", { via: normalizeAccessMethodParam(url) });
   const decryptReady = !note.encrypted || c.req.header("x-airtext-decrypt-ready") === "1";
-  const payload = publicItemPayload(note, decryptReady);
   const owner = await isDropOwner(c.req.raw, env, note.userId, note.deleteTokenHash);
+  const payload = publicItemPayload(note, decryptReady, owner);
   if (decryptReady && note.burnAfterRead && !owner) {
     const consumed = await env.DB.prepare("DELETE FROM notes WHERE id = ? AND burn_after_read = 1 RETURNING id").bind(note.id).first();
     if (!consumed) return jsonError("This drop has already been opened.", 404, "CODE_NOT_FOUND");
@@ -590,22 +621,18 @@ notesRoutes.delete("/api/item/:itemId", async (c) => {
   const note = await getNoteById(env, itemId);
   if (!note) return jsonError("This note has already expired or does not exist.", 404, "NOT_FOUND");
   const body = await readJsonBody<{ deleteToken?: string }>(c.req.raw, 4_000);
-  if (!body.ok) return body.response;
-  const token = typeof body.data.deleteToken === "string" ? body.data.deleteToken : "";
-  if (!token) return jsonError("Delete token is required.", 401, "DELETE_TOKEN_REQUIRED");
-  const suppliedHash = await hmacHex(env.APP_SECRET, `delete:${token}`);
-  if (!constantTimeEqual(suppliedHash, note.deleteTokenHash)) {
-    return jsonError("You can delete this note only from the browser that created it.", 403, "INVALID_DELETE_TOKEN");
-  }
+  const token = body.ok && typeof body.data.deleteToken === "string" ? body.data.deleteToken : "";
+  const auth = await authorizeDropMutation(c.req.raw, env, note.userId, note.deleteTokenHash, token, "delete", "note");
+  if (!auth.ok) return auth.response;
   await env.DB.prepare("DELETE FROM notes WHERE id = ?").bind(note.id).run();
-  await recordEvent(env, c.req.raw, "note_deleted", { by: "creator" });
+  await recordEvent(env, c.req.raw, "note_deleted", { by: auth.by });
   return jsonResponse({ ok: true, message: "Note deleted." });
 });
 
 notesRoutes.get("/api/item/:itemId", async (c) => {
   const note = await getNoteById(c.env, c.req.param("itemId"));
   if (!note || !await isDropOwner(c.req.raw, c.env, note.userId, note.deleteTokenHash)) return jsonError("Drop not found.", 404, "NOT_FOUND");
-  return jsonResponse({ ...publicItemPayload(note, true), isOwner: true });
+  return jsonResponse({ ...publicItemPayload(note, true, true), isOwner: true });
 });
 
 notesRoutes.patch("/api/item/:itemId", async (c) => {
@@ -620,17 +647,13 @@ notesRoutes.patch("/api/item/:itemId", async (c) => {
   );
   if (!body.ok) return body.response;
   const token = typeof body.data.deleteToken === "string" ? body.data.deleteToken : "";
-  if (!token) return jsonError("Delete token is required.", 401, "DELETE_TOKEN_REQUIRED");
-  const suppliedHash = await hmacHex(env.APP_SECRET, `delete:${token}`);
-  if (!constantTimeEqual(suppliedHash, note.deleteTokenHash)) {
-    return jsonError("You can edit this note only from the browser that created it.", 403, "INVALID_DELETE_TOKEN");
-  }
-  const requester = await getAuthenticatedUser(c.req.raw, env);
-  const limits = await getEffectiveLimits(env, requester);
+  const auth = await authorizeDropMutation(c.req.raw, env, note.userId, note.deleteTokenHash, token, "edit", "note");
+  if (!auth.ok) return auth.response;
+  const limits = await getEffectiveLimits(env, auth.user);
   const result = await applyNoteEdit(env, note, body.data, limits, settings);
   if (!result.ok) return result.response;
-  await recordEvent(env, c.req.raw, "note_edited", { by: "creator" });
-  return jsonResponse({ ...publicItemPayload(result.note, true), message: "Note updated." });
+  await recordEvent(env, c.req.raw, "note_edited", { by: auth.by });
+  return jsonResponse({ ...publicItemPayload(result.note, true, true), message: "Note updated." });
 });
 
 function normalizeAccessMethodParam(url: URL): "link" | "code" | "qr" | "network" {

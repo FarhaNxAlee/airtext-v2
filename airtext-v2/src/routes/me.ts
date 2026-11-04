@@ -179,7 +179,7 @@ meRoutes.get("/api/me/shares/notes/:noteId", async (c) => {
   if (!user) return jsonError("Sign in to manage your shares.", 401, "AUTH_REQUIRED");
   const note = await getNoteById(env, c.req.param("noteId"));
   if (!note || note.userId !== user.id) return jsonError("Note not found.", 404, "NOT_FOUND");
-  return jsonResponse(publicItemPayload(note, true));
+  return jsonResponse(publicItemPayload(note, true, true));
 });
 
 meRoutes.patch("/api/me/shares/notes/:noteId", async (c) => {
@@ -195,7 +195,7 @@ meRoutes.patch("/api/me/shares/notes/:noteId", async (c) => {
   const result = await applyNoteEdit(env, note, body.data, limits, settings);
   if (!result.ok) return result.response;
   await recordEvent(env, c.req.raw, "note_edited", { by: "owner" });
-  return jsonResponse({ ...publicItemPayload(result.note, true), message: "Note updated." });
+  return jsonResponse({ ...publicItemPayload(result.note, true, true), message: "Note updated." });
 });
 
 meRoutes.delete("/api/me/shares/notes/:noteId", async (c) => {
@@ -235,7 +235,7 @@ meRoutes.patch("/api/me/shares/files/:groupId", async (c) => {
   const result = await applyFileGroupEdit(env, group, existingFiles, form, limits, settings);
   if (!result.ok) return result.response;
   await recordEvent(env, c.req.raw, "file_edited", { by: "owner" });
-  return jsonResponse({ ...(await publicGroupPayload(env, result.group, result.files, true)), message: "File updated." });
+  return jsonResponse({ ...(await publicGroupPayload(env, result.group, result.files, true, true)), message: "File updated." });
 });
 
 meRoutes.delete("/api/me/shares/files/:groupId", async (c) => {

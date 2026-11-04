@@ -117,6 +117,25 @@ app.use("*", async (c, next) => {
   if (setupProblem) {
     return c.html(renderSetupPage(setupProblem), 500);
   }
+  const reqUrl = new URL(c.req.url);
+  if (reqUrl.pathname.startsWith("/api/") && ["POST", "PUT", "PATCH", "DELETE"].includes(c.req.method.toUpperCase())) {
+    const originHeader = c.req.header("origin");
+    if (originHeader) {
+      let originMatches = false;
+      try {
+        originMatches = new URL(originHeader).origin === reqUrl.origin;
+      } catch {
+        originMatches = false;
+      }
+      if (!originMatches) {
+        return jsonError("Cross-origin state-changing requests are not allowed.", 403, "CSRF_ORIGIN_MISMATCH");
+      }
+    }
+    const fetchSite = (c.req.header("sec-fetch-site") || "").toLowerCase();
+    if (fetchSite === "cross-site") {
+      return jsonError("Cross-site state-changing requests are not allowed.", 403, "CSRF_CROSS_SITE");
+    }
+  }
   await maybeCleanupD1(c.env);
   await next();
 });

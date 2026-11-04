@@ -8,8 +8,8 @@ import type { EffectiveLimits } from "../lib/limits";
 import { jsonResponse, jsonError, readJsonBody, readMultipartBody } from "../lib/http";
 import { hmacHex, hashPin, constantTimeEqual, randomBase64Url, randomShareCode } from "../lib/crypto";
 import { normalizeTitle, normalizeShareCode, formatServerDuration, isExpired } from "../lib/util";
-import { getRoomId, getClientIpHash, getAuthenticatedUser, isDropOwner } from "../middleware/auth";
-import { enforceCooldown } from "../middleware/rateLimit";
+import { getRoomId, getClientIpHash, getAuthenticatedUser, isDropOwner, authorizeDropMutation, isSafeDropOpenRequest } from "../middleware/auth";
+import { enforceCooldown, checkWindowLimit, recordWindowAttempt } from "../middleware/rateLimit";
 import { recordEvent } from "../lib/analytics";
 import { deleteObjectsReliably, isExtensionAllowed, getTotalFileStorageBytes, createFileDownloadToken, verifyFileDownloadToken } from "../lib/r2";
 
@@ -673,7 +673,7 @@ filesRoutes.post("/api/files", async (c) => {
     {
       ok: true,
       group: {
-        id: groupId, title, locked: wantsLock, burnAfterRead: wantsBurnAfterRead, code, createdAt, addedAt: createdAt, expiresAt, source: "mine",
+        id: groupId, title, locked: wantsLock, burnAfterRead: wantsBurnAfterRead, code, createdAt, addedAt: createdAt, expiresAt, isOwner: true, source: "mine",
         totalSizeBytes: batchBytes,
         fileCount: uploaded.length,
         files: uploaded.map((entry) => ({ id: entry.id, filename: entry.filename, mime: entry.mime, sizeBytes: entry.size })),
@@ -732,9 +732,25 @@ filesRoutes.post("/api/local/file/:groupId/unlock", async (c) => {
 filesRoutes.get("/api/share/file/:code", async (c) => {
   const env = c.env;
   const url = new URL(c.req.url);
+  const clientHash = await getClientIpHash(c.req.raw, env.APP_SECRET);
+  const missLimit = await checkWindowLimit(env, `share-miss:${clientHash}`, 10);
+  if (!missLimit.allowed) {
+    return jsonError(
+      `Too many invalid share code attempts. Please wait ${missLimit.retryAfter} second${missLimit.retryAfter === 1 ? "" : "s"} and try again.`,
+      429,
+      "SHARE_RATE_LIMIT",
+      { "retry-after": String(missLimit.retryAfter) },
+    );
+  }
   const settings = await getSiteSettings(env);
   const group = await getGroupByCode(env, c.req.param("code"));
-  if (!group) return jsonError("This share code is invalid or has expired.", 404, "CODE_NOT_FOUND");
+  if (!group) {
+    await recordWindowAttempt(env, `share-miss:${clientHash}`, 30);
+    return jsonError("This share code is invalid or has expired.", 404, "CODE_NOT_FOUND");
+  }
+  if (group.burnAfterRead && !isSafeDropOpenRequest(c.req.raw)) {
+    return jsonError("This drop cannot be opened from a preview or cross-site embed.", 403, "UNSAFE_OPEN_CONTEXT");
+  }
   const via = normalizeAccessMethodParam(url);
   if (!group.locked && !group.burnAfterRead && settings.crossNetworkAddEnabled) {
     const roomId = await getRoomId(c.req.raw, env.APP_SECRET);
@@ -751,6 +767,9 @@ filesRoutes.post("/api/share/file/:code/unlock", async (c) => {
   const settings = await getSiteSettings(env);
   const group = await getGroupByCode(env, c.req.param("code"));
   if (!group) return jsonError("This share code is invalid or has expired.", 404, "CODE_NOT_FOUND");
+  if (group.burnAfterRead && !isSafeDropOpenRequest(c.req.raw)) {
+    return jsonError("This drop cannot be opened from a preview or cross-site embed.", 403, "UNSAFE_OPEN_CONTEXT");
+  }
   const result = await verifyGroupPin(c.req.raw, env, group);
   if (!result.ok) return result.response;
   if (!group.burnAfterRead && settings.crossNetworkAddEnabled) {
@@ -793,6 +812,9 @@ filesRoutes.get("/api/file/:fileId/download", async (c) => {
   // Streaming keeps large downloads out of the Worker's JavaScript heap.
   if (entry.consumedAt) return jsonError("This file has already been downloaded.", 404, "NOT_FOUND");
   if (group.burnAfterRead && !ownerDownload) {
+    if (!isSafeDropOpenRequest(c.req.raw)) {
+      return jsonError("This drop cannot be downloaded from a preview or cross-site embed.", 403, "UNSAFE_OPEN_CONTEXT");
+    }
     const claimed = await env.DB.prepare("UPDATE files SET consumed_at = ? WHERE id = ? AND consumed_at IS NULL RETURNING id").bind(Date.now(), entry.id).first();
     if (!claimed) return jsonError("This file has already been downloaded.", 404, "NOT_FOUND");
     const reader = object.body.getReader();
@@ -836,15 +858,11 @@ filesRoutes.delete("/api/file/:groupId", async (c) => {
   const group = await getGroupById(env, groupId);
   if (!group) return jsonError("This file has already expired or does not exist.", 404, "NOT_FOUND");
   const body = await readJsonBody<{ deleteToken?: string }>(c.req.raw, 4_000);
-  if (!body.ok) return body.response;
-  const token = typeof body.data.deleteToken === "string" ? body.data.deleteToken : "";
-  if (!token) return jsonError("Delete token is required.", 401, "DELETE_TOKEN_REQUIRED");
-  const suppliedHash = await hmacHex(env.APP_SECRET, `delete:${token}`);
-  if (!constantTimeEqual(suppliedHash, group.deleteTokenHash)) {
-    return jsonError("You can delete this file only from the browser that created it.", 403, "INVALID_DELETE_TOKEN");
-  }
+  const token = body.ok && typeof body.data.deleteToken === "string" ? body.data.deleteToken : "";
+  const auth = await authorizeDropMutation(c.req.raw, env, group.userId, group.deleteTokenHash, token, "delete", "file");
+  if (!auth.ok) return auth.response;
   await deleteGroupAndFiles(env, group.id);
-  await recordEvent(env, c.req.raw, "file_deleted", { by: "creator" });
+  await recordEvent(env, c.req.raw, "file_deleted", { by: auth.by });
   return jsonResponse({ ok: true, message: "File deleted." });
 });
 
@@ -863,18 +881,14 @@ filesRoutes.patch("/api/file/:groupId", async (c) => {
   if (!multipart.ok) return multipart.response;
   const form = multipart.data;
   const token = typeof form.get("deleteToken") === "string" ? (form.get("deleteToken") as string) : "";
-  if (!token) return jsonError("Delete token is required.", 401, "DELETE_TOKEN_REQUIRED");
-  const suppliedHash = await hmacHex(env.APP_SECRET, `delete:${token}`);
-  if (!constantTimeEqual(suppliedHash, group.deleteTokenHash)) {
-    return jsonError("You can edit this file only from the browser that created it.", 403, "INVALID_DELETE_TOKEN");
-  }
+  const auth = await authorizeDropMutation(c.req.raw, env, group.userId, group.deleteTokenHash, token, "edit", "file");
+  if (!auth.ok) return auth.response;
   const settings = await getSiteSettings(env);
-  const requester = await getAuthenticatedUser(c.req.raw, env);
-  const limits = await getEffectiveLimits(env, requester);
+  const limits = await getEffectiveLimits(env, auth.user);
   const existingFiles = await getFilesForGroup(env, group.id);
   const result = await applyFileGroupEdit(env, group, existingFiles, form, limits, settings);
   if (!result.ok) return result.response;
-  await recordEvent(env, c.req.raw, "file_edited", { by: "creator" });
+  await recordEvent(env, c.req.raw, "file_edited", { by: auth.by });
   return jsonResponse({ ...(await publicGroupPayload(env, result.group, result.files, true, true)), message: "File updated." });
 });
 
