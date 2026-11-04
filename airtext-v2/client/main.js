@@ -1,7 +1,7 @@
 import "./style.css";
 import { COPY } from "./copy.js";
 import { encryptText, decryptItem, keyForCode, storeKey, clearStoredKeys, rememberLinkKey, withKey } from "./encryption.js";
-import { rememberDrop, recentDrops, forgetDrop, renderRecentDrops, renderNearbyBoard, addSmartTools, addFileTools, uploadRequest } from "./features.js";
+import { rememberDrop, recentDrops, forgetDrop, renderRecentDrops, renderNearbyBoard, addSmartTools, addFileTools, uploadRequest, formatCodeText, looksLikeCode } from "./features.js";
 
 (function () {
       "use strict";
@@ -520,7 +520,13 @@ import { rememberDrop, recentDrops, forgetDrop, renderRecentDrops, renderNearbyB
         if (el.loginForm) el.loginForm.addEventListener("submit", submitLoginPage);
 
         if (el.shareTitle) el.shareTitle.addEventListener("input", updateCounters);
-        if (el.shareText) el.shareText.addEventListener("input", updateCounters);
+        if (el.shareText) {
+          el.shareText.addEventListener("input", updateCounters);
+          bindCodeEditorTextarea(el.shareText, function () { return document.getElementById("share-code-mode-toggle"); });
+        }
+        if (el.editItemText) {
+          bindCodeEditorTextarea(el.editItemText, function () { return document.getElementById("edit-code-mode-toggle"); });
+        }
         if (el.lockToggle) {
           el.lockToggle.addEventListener("change", function () {
             if (el.pinFieldWrap) el.pinFieldWrap.classList.toggle("hidden", !el.lockToggle.checked);
@@ -575,15 +581,23 @@ import { rememberDrop, recentDrops, forgetDrop, renderRecentDrops, renderNearbyB
           if (action === "close-file-modal") closeFileModal();
           if (action === "close-qr-modal") closeQrModal();
           if (action === "open-edit-item-modal" && state.currentItem) {
+            if (!canManageItem(state.currentItem)) return toast("You do not have permission to edit this share.", "error");
             var itemTier = state.currentItem.sharedBy && state.currentItem.isOwner ? "owner" : "anonymous";
             openEditItemModal(state.currentItem.id, itemTier, state.currentItem);
           }
           if (action === "close-edit-item-modal") closeEditItemModal();
           if (action === "open-edit-file-modal" && state.currentFile) {
+            if (!canManageFile(state.currentFile)) return toast("You do not have permission to edit this share.", "error");
             var fileTier = state.currentFile.sharedBy && state.currentFile.isOwner ? "owner" : "anonymous";
             openEditFileModal(state.currentFile.id, fileTier, state.currentFile);
           }
           if (action === "close-edit-file-modal") closeEditFileModal();
+          if (action === "paste-share-code") pasteCodeIntoTextarea(el.shareText, document.getElementById("share-code-mode-toggle"), true);
+          if (action === "format-share-code") formatTextareaCode(el.shareText, document.getElementById("share-code-mode-toggle"), true);
+          if (action === "toggle-share-code-mode") toggleTextareaCodeMode(el.shareText, document.getElementById("share-code-mode-toggle"));
+          if (action === "paste-edit-code") pasteCodeIntoTextarea(el.editItemText, document.getElementById("edit-code-mode-toggle"), false);
+          if (action === "format-edit-code") formatTextareaCode(el.editItemText, document.getElementById("edit-code-mode-toggle"), false);
+          if (action === "toggle-edit-code-mode") toggleTextareaCodeMode(el.editItemText, document.getElementById("edit-code-mode-toggle"));
           var removeEditFileId = actionElement.getAttribute("data-remove-file-id");
           if (action === "remove-edit-file" && removeEditFileId) toggleEditFileRemoval(removeEditFileId);
           if (action === "toggle-create-pin") togglePassword(el.sharePin);
@@ -748,7 +762,7 @@ import { rememberDrop, recentDrops, forgetDrop, renderRecentDrops, renderNearbyB
             })
           });
 
-          saveDeleteToken(response.item.id, response.deleteToken);
+          if (!response.item.sharedBy) saveDeleteToken(response.item.id, response.deleteToken);
           if (envelope) storeKey(response.item.code, envelope.key);
           rememberDrop("note", response.item);
           refreshRecentDrops();
@@ -1072,6 +1086,12 @@ import { rememberDrop, recentDrops, forgetDrop, renderRecentDrops, renderNearbyB
         el.unlockForm.classList.add("hidden");
         el.deleteButton.classList.add("hidden");
         el.deleteButton.classList.remove("inline-flex");
+        el.deleteButton.hidden = true;
+        if (el.editItemButton) {
+          el.editItemButton.classList.add("hidden");
+          el.editItemButton.classList.remove("inline-flex");
+          el.editItemButton.hidden = true;
+        }
         el.itemModal.classList.remove("hidden");
         el.itemModal.classList.add("flex");
         el.itemModal.setAttribute("aria-hidden", "false");
@@ -1126,12 +1146,14 @@ import { rememberDrop, recentDrops, forgetDrop, renderRecentDrops, renderNearbyB
       }
 
       function updateDeleteButton(itemId, item) {
-        var allowed = item ? canManageItem(item) : Boolean(getDeleteToken(itemId));
+        var allowed = Boolean(item ? canManageItem(item) : getDeleteToken(itemId));
+        el.deleteButton.hidden = !allowed;
         el.deleteButton.classList.toggle("hidden", !allowed);
-        el.deleteButton.classList.toggle("inline-flex", Boolean(allowed));
+        el.deleteButton.classList.toggle("inline-flex", allowed);
         if (el.editItemButton) {
+          el.editItemButton.hidden = !allowed;
           el.editItemButton.classList.toggle("hidden", !allowed);
-          el.editItemButton.classList.toggle("inline-flex", Boolean(allowed));
+          el.editItemButton.classList.toggle("inline-flex", allowed);
         }
       }
 
@@ -1197,7 +1219,7 @@ import { rememberDrop, recentDrops, forgetDrop, renderRecentDrops, renderNearbyB
         setButtonLoading(el.fileUploadSubmit, true, "Uploading…");
         try {
           var response = await apiFetch("/api/files", { method: "POST", body: form });
-          saveDeleteToken("file:" + response.group.id, response.deleteToken);
+          if (!response.group.sharedBy) saveDeleteToken("file:" + response.group.id, response.deleteToken);
           rememberDrop("file", response.group);
           refreshRecentDrops();
           if (!response.group.burnAfterRead) upsertLocalFile(response.group);
@@ -1542,7 +1564,10 @@ import { rememberDrop, recentDrops, forgetDrop, renderRecentDrops, renderNearbyB
         }
         if (!item || state.editTarget !== prefillTarget) return;
         if (typeof item.title === "string") el.editItemTitle.value = item.title;
-        if (typeof item.text === "string") el.editItemText.value = item.text;
+        if (typeof item.text === "string") {
+          el.editItemText.value = item.text;
+          setCodeMode(el.editItemText, document.getElementById("edit-code-mode-toggle"), looksLikeCode(item.text));
+        }
         if (typeof item.locked === "boolean") {
           el.editItemLockToggle.checked = item.locked;
           if (el.editItemPinFieldWrap) el.editItemPinFieldWrap.classList.toggle("hidden", !item.locked);
@@ -1560,6 +1585,7 @@ import { rememberDrop, recentDrops, forgetDrop, renderRecentDrops, renderNearbyB
         if (el.editItemError) el.editItemError.classList.add("hidden");
         el.editItemTitle.value = "";
         el.editItemText.value = "";
+        setCodeMode(el.editItemText, document.getElementById("edit-code-mode-toggle"), false);
         el.editItemLockToggle.checked = false;
         if (el.editItemPinFieldWrap) el.editItemPinFieldWrap.classList.add("hidden");
         el.editItemPin.value = "";
@@ -1901,6 +1927,12 @@ import { rememberDrop, recentDrops, forgetDrop, renderRecentDrops, renderNearbyB
         el.fileUnlockForm.classList.add("hidden");
         el.deleteFileButton.classList.add("hidden");
         el.deleteFileButton.classList.remove("inline-flex");
+        el.deleteFileButton.hidden = true;
+        if (el.editFileButton) {
+          el.editFileButton.classList.add("hidden");
+          el.editFileButton.classList.remove("inline-flex");
+          el.editFileButton.hidden = true;
+        }
         el.fileModal.classList.remove("hidden");
         el.fileModal.classList.add("flex");
         el.fileModal.setAttribute("aria-hidden", "false");
@@ -1941,10 +1973,12 @@ import { rememberDrop, recentDrops, forgetDrop, renderRecentDrops, renderNearbyB
       }
 
       function updateFileDeleteButton(fileId, group) {
-        var allowed = group ? canManageFile(group) : Boolean(getDeleteToken("file:" + fileId));
+        var allowed = Boolean(group ? canManageFile(group) : getDeleteToken("file:" + fileId));
+        el.deleteFileButton.hidden = !allowed;
         el.deleteFileButton.classList.toggle("hidden", !allowed);
         el.deleteFileButton.classList.toggle("inline-flex", allowed);
         if (el.editFileButton) {
+          el.editFileButton.hidden = !allowed;
           el.editFileButton.classList.toggle("hidden", !allowed);
           el.editFileButton.classList.toggle("inline-flex", allowed);
         }
@@ -4773,7 +4807,78 @@ import { rememberDrop, recentDrops, forgetDrop, renderRecentDrops, renderNearbyB
         el.createForm.reset();
         el.pinFieldWrap.classList.add("hidden");
         el.sharePin.type = "password";
+        setCodeMode(el.shareText, document.getElementById("share-code-mode-toggle"), false);
         updateCounters();
+      }
+
+      function setCodeMode(textarea, toggleBtn, active) {
+        if (!textarea) return;
+        var enabled = Boolean(active);
+        textarea.classList.toggle("code-editor-active", enabled);
+        textarea.spellcheck = !enabled;
+        if (toggleBtn) toggleBtn.setAttribute("aria-pressed", String(enabled));
+      }
+
+      function toggleTextareaCodeMode(textarea, toggleBtn) {
+        if (!textarea) return;
+        var next = !textarea.classList.contains("code-editor-active");
+        setCodeMode(textarea, toggleBtn, next);
+        textarea.focus();
+      }
+
+      async function pasteCodeIntoTextarea(textarea, toggleBtn, isCreate) {
+        if (!textarea || textarea.disabled) return;
+        try {
+          var clip = await navigator.clipboard.readText();
+          if (!clip || !clip.trim()) return toast("Clipboard is empty.", "error");
+          var formatted = looksLikeCode(clip) ? formatCodeText(clip) : clip.replace(/\r\n?/g, "\n");
+          textarea.value = formatted;
+          setCodeMode(textarea, toggleBtn, true);
+          if (isCreate) updateCounters();
+          textarea.focus();
+          toast("Code pasted and ready to share.", "success");
+        } catch (error) {
+          setCodeMode(textarea, toggleBtn, true);
+          textarea.focus();
+          toast("Code mode enabled — press Ctrl+V (or Cmd+V) to paste.", "info");
+        }
+      }
+
+      function formatTextareaCode(textarea, toggleBtn, isCreate) {
+        if (!textarea || textarea.disabled) return;
+        if (!textarea.value || !textarea.value.trim()) {
+          return toast("Paste or type some code first.", "error");
+        }
+        var formatted = formatCodeText(textarea.value);
+        if (formatted) {
+          textarea.value = formatted;
+          setCodeMode(textarea, toggleBtn, true);
+          if (isCreate) updateCounters();
+          textarea.focus();
+          toast("Code formatted.", "success");
+        }
+      }
+
+      function bindCodeEditorTextarea(textarea, getToggleBtn) {
+        if (!textarea) return;
+        textarea.addEventListener("keydown", function (event) {
+          if (event.key === "Tab" && textarea.classList.contains("code-editor-active")) {
+            event.preventDefault();
+            var start = textarea.selectionStart;
+            var end = textarea.selectionEnd;
+            textarea.value = textarea.value.slice(0, start) + "  " + textarea.value.slice(end);
+            textarea.selectionStart = textarea.selectionEnd = start + 2;
+            textarea.dispatchEvent(new Event("input"));
+          }
+        });
+        textarea.addEventListener("paste", function (event) {
+          var text = event.clipboardData && event.clipboardData.getData("text");
+          if (text && looksLikeCode(text)) {
+            window.setTimeout(function () {
+              setCodeMode(textarea, getToggleBtn ? getToggleBtn() : null, true);
+            }, 0);
+          }
+        });
       }
 
       function upsertLocalItem(item, optimistic) {

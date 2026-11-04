@@ -20,7 +20,176 @@ export function tierBadge(sharedBy) {
   return node("span", `${icon} ${sharedBy.name}`, `tier-badge ${cls}`);
 }
 
+export function looksLikeCode(raw) {
+  if (typeof raw !== "string") return false;
+  const text = raw.trim();
+  if (!text) return false;
+  try {
+    const parsed = JSON.parse(text);
+    if (parsed && typeof parsed === "object") return true;
+  } catch { /* Not JSON. */ }
+  if (/^```|^#!\/usr\/|^#!\/bin\//.test(text)) return true;
+  if (/^<[a-zA-Z!/?][\s\S]*>[ \t]*$/.test(text) && /<\/[a-zA-Z]/.test(text)) return true;
+  if (/(?:^|\n)\s*(?:function\s+\w*|const\s+\w+|let\s+\w+|var\s+\w+|import\s+[\s\S]+?from\s+|export\s+(?:default|const|function|class)|class\s+\w+|interface\s+\w+|def\s+\w+\s*\(|#include\s*[<"]|package\s+\w+|public\s+(?:class|static|void)|SELECT\s+[\s\S]+?\s+FROM\s+)/i.test(text)) {
+    return true;
+  }
+  const lines = text.split(/\r?\n/);
+  if (lines.length >= 2) {
+    const indented = lines.filter((line) => /^(?:  |\t)\S/.test(line)).length;
+    const codeEndings = lines.filter((line) => /[{}();,]\s*$/.test(line)).length;
+    if (indented >= 2 || codeEndings >= 2) return true;
+  }
+  if (/[{};]/.test(text) && /\b(?:function|return|const|let|var|if|else|for|while)\b/.test(text)) return true;
+  return false;
+}
+
+function dedentLines(lines) {
+  let minIndent = Infinity;
+  for (const line of lines) {
+    if (!line.trim()) continue;
+    const match = line.match(/^[ ]*/);
+    if (match && match[0].length < minIndent) minIndent = match[0].length;
+  }
+  if (!Number.isFinite(minIndent) || minIndent <= 0) return lines;
+  return lines.map((line) => (line.trim() ? line.slice(minIndent) : ""));
+}
+
+function formatBraceCode(text) {
+  const expanded = [];
+  let current = "";
+  let inSingle = false;
+  let inDouble = false;
+  let inTemplate = false;
+  let parenDepth = 0;
+
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    const prev = i > 0 ? text[i - 1] : "";
+    if (ch === "'" && !inDouble && !inTemplate && prev !== "\\") inSingle = !inSingle;
+    else if (ch === '"' && !inSingle && !inTemplate && prev !== "\\") inDouble = !inDouble;
+    else if (ch === "`" && !inSingle && !inDouble && prev !== "\\") inTemplate = !inTemplate;
+
+    if (!inSingle && !inDouble && !inTemplate) {
+      if (ch === "(") parenDepth++;
+      else if (ch === ")" && parenDepth > 0) parenDepth--;
+
+      if (ch === "{") {
+        current = current.replace(/[ ]+$/, "");
+        expanded.push(current ? `${current} {` : "{");
+        current = "";
+        continue;
+      }
+      if (ch === "}") {
+        if (current.trim()) expanded.push(current.trim());
+        current = "}";
+        if (text[i + 1] === ";" || text[i + 1] === ",") {
+          current += text[i + 1];
+          i++;
+        }
+        expanded.push(current);
+        current = "";
+        continue;
+      }
+      if (ch === ";" && parenDepth === 0) {
+        current += ";";
+        expanded.push(current.trim());
+        current = "";
+        continue;
+      }
+      if (ch === "\n") {
+        expanded.push(current.replace(/[ ]+$/, ""));
+        current = "";
+        continue;
+      }
+    }
+    current += ch;
+  }
+  if (current.trim()) expanded.push(current.replace(/[ ]+$/, ""));
+
+  let depth = 0;
+  const out = [];
+  for (const rawLine of expanded) {
+    const trimmed = rawLine.trim();
+    if (!trimmed) {
+      if (out.length && out[out.length - 1] !== "") out.push("");
+      continue;
+    }
+    if (/^[}\])]/.test(trimmed)) depth = Math.max(0, depth - 1);
+    out.push("  ".repeat(depth) + trimmed);
+    const opens = (trimmed.match(/[{[(]/g) || []).length;
+    const closes = (trimmed.match(/[}\])]/g) || []).length;
+    const net = opens - closes + (/^[}\])]/.test(trimmed) ? 1 : 0);
+    depth = Math.max(0, depth + net);
+  }
+  return out.join("\n").trim();
+}
+
+function formatMarkupCode(text) {
+  const tokens = text
+    .replace(/>\s+</g, ">\n<")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  let depth = 0;
+  const out = [];
+  for (const token of tokens) {
+    const isClosing = /^<\//.test(token);
+    const isSelfClosing = /\/>$/.test(token) || /^<(?:!|meta|link|img|br|hr|input)\b/i.test(token) || /<([a-zA-Z0-9-]+)[^>]*>.*<\/\1>$/.test(token);
+    if (isClosing) depth = Math.max(0, depth - 1);
+    out.push("  ".repeat(depth) + token);
+    if (!isClosing && !isSelfClosing && /^<[a-zA-Z]/.test(token)) depth++;
+  }
+  return out.join("\n");
+}
+
+export function formatCodeText(raw) {
+  if (typeof raw !== "string") return "";
+  let text = raw.replace(/\r\n?/g, "\n").replace(/\t/g, "  ").trim();
+  if (!text) return "";
+
+  const fenceMatch = text.match(/^```[a-zA-Z0-9_-]*\n([\s\S]*?)\n```$/);
+  if (fenceMatch) text = fenceMatch[1].trim();
+
+  try {
+    const parsed = JSON.parse(text);
+    if (parsed && typeof parsed === "object") {
+      return JSON.stringify(parsed, null, 2);
+    }
+  } catch { /* Continue with general code formatting. */ }
+
+  if (/^<[a-zA-Z!/?][\s\S]*>$/.test(text) && /<\/[a-zA-Z]/.test(text)) {
+    return formatMarkupCode(text);
+  }
+
+  const lines = text.split("\n").map((line) => line.replace(/[ ]+$/, ""));
+  if (lines.length <= 2 && /[{}]/.test(text)) {
+    return formatBraceCode(text);
+  }
+
+  if (/[{}]/.test(text)) {
+    let depth = 0;
+    const formatted = [];
+    for (const rawLine of lines) {
+      const trimmed = rawLine.trim();
+      if (!trimmed) {
+        if (formatted.length && formatted[formatted.length - 1] !== "") formatted.push("");
+        continue;
+      }
+      if (/^[}\])]/.test(trimmed)) depth = Math.max(0, depth - 1);
+      formatted.push("  ".repeat(depth) + trimmed);
+      const opens = (trimmed.match(/[{[(]/g) || []).length;
+      const closes = (trimmed.match(/[}\])]/g) || []).length;
+      const net = opens - closes + (/^[}\])]/.test(trimmed) ? 1 : 0);
+      depth = Math.max(0, depth + net);
+    }
+    return formatted.join("\n").trim();
+  }
+
+  return dedentLines(lines).join("\n").replace(/\n{3,}/g, "\n\n").trim();
+}
+
 export function rememberDrop(kind, drop) {
+  if (drop && drop.sharedBy) return;
   try {
     const entries = recentDrops().filter((item) => item.id !== drop.id);
     entries.unshift({ kind, id: drop.id, title: drop.title, code: drop.code, expiresAt: drop.expiresAt, burnAfterRead: drop.burnAfterRead });
@@ -136,17 +305,37 @@ export function addSmartTools(container, text, copy, toast) {
   } catch { /* Most notes are not URLs. */ }
   const codes = [...new Set(text.match(/\b\d{4,8}\b/g) || [])];
   if (codes.length === 1) tools.append(button(`Copy code ${codes[0]}`, () => copy(codes[0], "Code copied.")));
-  tools.append(button("Monospace", (event) => {
+
+  const isCode = looksLikeCode(text);
+  container.classList.toggle("code-view", isCode);
+  const labelEl = document.querySelector(".modal-text-label");
+  if (labelEl) labelEl.textContent = isCode ? "Code" : "Text";
+
+  const monoBtn = button("Monospace", (event) => {
     const active = container.classList.toggle("code-view");
     event.currentTarget.setAttribute("aria-pressed", String(active));
-  }));
+  });
+  monoBtn.setAttribute("aria-pressed", String(isCode));
+  tools.append(monoBtn);
+
   let json = null;
   try {
     const parsed = JSON.parse(text);
     if (parsed && typeof parsed === "object") json = JSON.stringify(parsed, null, 2);
   } catch { /* Plain text. */ }
-  if (json) tools.append(button("Format JSON", () => { container.textContent = json; container.classList.add("code-view"); }));
-  tools.append(button("Download text", () => saveBlob(new Blob([text], { type: json ? "application/json" : "text/plain" }), json ? "drop.json" : "drop.txt")));
+
+  tools.append(button(json ? "Format JSON" : "Format code", () => {
+    const formatted = formatCodeText(container.textContent || text);
+    if (formatted) {
+      container.textContent = formatted;
+      container.classList.add("code-view");
+      monoBtn.setAttribute("aria-pressed", "true");
+      if (labelEl) labelEl.textContent = "Code";
+      if (toast) toast("Code formatted.", "success");
+    }
+  }));
+
+  tools.append(button("Download text", () => saveBlob(new Blob([container.textContent || text], { type: json ? "application/json" : "text/plain" }), json ? "drop.json" : "drop.txt")));
   const toolbarSlot = document.getElementById("modal-text-tools-slot");
   if (toolbarSlot) toolbarSlot.replaceChildren(tools);
   else container.before(tools);

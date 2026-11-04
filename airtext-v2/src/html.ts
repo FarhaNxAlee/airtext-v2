@@ -281,10 +281,10 @@ const SHARED_MODALS = String.raw`<div id="maintenance-modal" class="maintenance-
             <button type="button" data-action="show-current-qr" class="action-btn flex-1 py-2.5 text-sm font-semibold">
               Code & QR
             </button>
-            <button id="edit-item-button" type="button" data-action="open-edit-item-modal" class="action-btn hidden flex-1 items-center justify-center py-2.5 text-sm font-semibold">
+            <button id="edit-item-button" type="button" data-action="open-edit-item-modal" class="action-btn hidden flex-1 items-center justify-center py-2.5 text-sm font-semibold" hidden>
               Edit
             </button>
-            <button id="delete-item-button" type="button" data-action="delete-current-item" class="action-btn modal-delete-btn hidden flex-1 items-center justify-center py-2.5 text-sm font-semibold">
+            <button id="delete-item-button" type="button" data-action="delete-current-item" class="action-btn modal-delete-btn hidden flex-1 items-center justify-center py-2.5 text-sm font-semibold" hidden>
               Delete
             </button>
           </div>
@@ -333,8 +333,8 @@ const SHARED_MODALS = String.raw`<div id="maintenance-modal" class="maintenance-
           <div id="file-modal-list" class="grid gap-2.5"></div>
           <div class="modal-footer-actions mt-4 flex flex-col gap-2.5 sm:flex-row">
             <button type="button" data-action="show-current-file-qr" class="action-btn flex-1 py-2.5 text-sm font-semibold">Code & QR</button>
-            <button id="edit-file-button" type="button" data-action="open-edit-file-modal" class="action-btn hidden flex-1 items-center justify-center py-2.5 text-sm font-semibold">Edit</button>
-            <button id="delete-file-button" type="button" data-action="delete-current-file" class="action-btn modal-delete-btn hidden flex-1 items-center justify-center py-2.5 text-sm font-semibold">Delete</button>
+            <button id="edit-file-button" type="button" data-action="open-edit-file-modal" class="action-btn hidden flex-1 items-center justify-center py-2.5 text-sm font-semibold" hidden>Edit</button>
+            <button id="delete-file-button" type="button" data-action="delete-current-file" class="action-btn modal-delete-btn hidden flex-1 items-center justify-center py-2.5 text-sm font-semibold" hidden>Delete</button>
           </div>
         </div>
       </div>
@@ -355,7 +355,15 @@ const SHARED_MODALS = String.raw`<div id="maintenance-modal" class="maintenance-
         <label for="edit-item-title" class="sr-only">Title</label>
         <input id="edit-item-title" type="text" maxlength="__MAX_TITLE_LENGTH__" placeholder="Title" class="w-full rounded-lg border border-[var(--line)] bg-black/25 px-3 py-2.5 text-sm text-white outline-none placeholder:text-slate-600 focus:border-cyan-400/50">
         <label for="edit-item-text" class="sr-only">Text</label>
-        <textarea id="edit-item-text" rows="8" maxlength="__MAX_TEXT_LENGTH__" placeholder="Leave blank to keep the current text" class="scrollbar-thin mt-3 w-full resize-y rounded-lg border border-[var(--line)] bg-black/25 p-3 text-sm text-slate-200 outline-none placeholder:text-slate-600 focus:border-cyan-400/50"></textarea>
+        <div class="composer-code-toolbar mt-3">
+          <span class="composer-code-label">Content</span>
+          <div class="composer-code-actions">
+            <button type="button" data-action="paste-edit-code" class="action-btn">Paste code</button>
+            <button type="button" data-action="format-edit-code" class="action-btn">Format code</button>
+            <button id="edit-code-mode-toggle" type="button" data-action="toggle-edit-code-mode" aria-pressed="false" class="action-btn">&lt;/&gt; Code mode</button>
+          </div>
+        </div>
+        <textarea id="edit-item-text" rows="8" maxlength="__MAX_TEXT_LENGTH__" placeholder="Leave blank to keep the current text" class="scrollbar-thin mt-2 w-full resize-y rounded-lg border border-[var(--line)] bg-black/25 p-3 text-sm text-slate-200 outline-none placeholder:text-slate-600 focus:border-cyan-400/50"></textarea>
         <div class="mt-4 flex flex-wrap items-center gap-3">
           <label class="inline-flex cursor-pointer items-center gap-2 text-sm text-neutral-400">
             <input id="edit-item-lock-toggle" type="checkbox" class="peer sr-only">
@@ -1017,6 +1025,15 @@ function createCardFragment(tabPanel?: string): string {
               class="min-w-0 flex-1 bg-transparent text-lg font-medium text-white outline-none placeholder:text-slate-600"
             >
             <span id="title-counter" class="text-[11px] text-neutral-600">0 / __MAX_TITLE_LENGTH__</span>
+          </div>
+
+          <div class="composer-code-toolbar mt-3">
+            <span class="composer-code-label">Text / Code</span>
+            <div class="composer-code-actions">
+              <button type="button" data-action="paste-share-code" class="action-btn">Paste code</button>
+              <button type="button" data-action="format-share-code" class="action-btn">Format code</button>
+              <button id="share-code-mode-toggle" type="button" data-action="toggle-share-code-mode" aria-pressed="false" class="action-btn">&lt;/&gt; Code mode</button>
+            </div>
           </div>
 
           <div class="relative">

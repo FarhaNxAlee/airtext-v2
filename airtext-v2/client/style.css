@@ -602,6 +602,13 @@
   transition:background-color .15s,border-color .15s; cursor:pointer;
 }
 .action-btn:hover, .btn-secondary:hover, .note-actions button:hover, .admin-row-actions button:hover { border-color:var(--accent); background:var(--accent-soft); }
+.action-btn.hidden, .btn-secondary.hidden, .note-actions button.hidden, .admin-row-actions button.hidden, .action-btn[hidden] { display:none !important; }
+.composer-code-toolbar { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:8px; padding:8px 12px; border:1px solid var(--line); border-radius:10px; background:var(--panel-soft); }
+.composer-code-label { color:var(--muted); font-size:11px; font-weight:800; letter-spacing:.08em; text-transform:uppercase; }
+.composer-code-actions { display:flex; flex-wrap:wrap; align-items:center; gap:6px; }
+.composer-code-actions .action-btn { min-height:30px; padding:4px 10px; font-size:11px; font-weight:700; border-radius:6px; }
+.composer-code-actions .action-btn[aria-pressed="true"] { border-color:var(--accent); background:var(--accent-soft); color:var(--accent); }
+textarea.code-editor-active { font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace !important; font-size:13.5px !important; line-height:1.65 !important; tab-size:2; white-space:pre; overflow-x:auto; background:rgba(0,0,0,.22) !important; border:1px solid var(--line) !important; border-radius:10px; padding:14px !important; margin-top:10px; }
 .action-btn.primary-action { background:var(--accent); color:var(--accent-text); border-color:var(--accent); }
 .note-actions button[data-action*="delete"]:hover, .admin-row-actions button[data-action*="delete"]:hover { background:#a61b32; border-color:#a61b32; color:#fff; }
 .note-actions .icon-button { width:36px; height:36px; min-width:36px; }
